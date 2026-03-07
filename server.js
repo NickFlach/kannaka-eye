@@ -1380,18 +1380,58 @@ fileInput.addEventListener('change', (e) => {
 });
 
 function handleFile(file) {
-  if (file.size > 1024 * 1024) { // 1MB limit
-    alert('File too large. Please select a file under 1MB.');
-    return;
-  }
+  const MAX_SAMPLES = 50000; // Sample up to 50k points for glyph generation
   
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    const arrayBuffer = e.target.result;
-    const bytes = new Uint8Array(arrayBuffer);
-    processInput(Array.from(bytes), 'bytes');
-  };
-  reader.readAsArrayBuffer(file);
+  if (file.size <= 1024 * 1024) {
+    // Small files: read entirely
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const bytes = new Uint8Array(e.target.result);
+      processInput(Array.from(bytes), 'bytes');
+    };
+    reader.readAsArrayBuffer(file);
+  } else {
+    // Large files: sample evenly across the file
+    const chunkSize = 64 * 1024; // 64KB chunks
+    const totalChunks = Math.ceil(file.size / chunkSize);
+    const step = Math.max(1, Math.floor(totalChunks / (MAX_SAMPLES / chunkSize)));
+    const samples = [];
+    let chunksRead = 0;
+    let chunkIndex = 0;
+    
+    document.getElementById('info-text').textContent = 
+      'Reading ' + (file.size / (1024*1024)).toFixed(1) + ' MB...';
+    
+    function readNextChunk() {
+      if (chunkIndex >= totalChunks || samples.length >= MAX_SAMPLES) {
+        document.getElementById('info-text').textContent = 
+          'Sampled ' + samples.length.toLocaleString() + ' points from ' + 
+          (file.size / (1024*1024)).toFixed(1) + ' MB';
+        processInput(samples, 'bytes');
+        return;
+      }
+      
+      const start = chunkIndex * chunkSize;
+      const end = Math.min(start + chunkSize, file.size);
+      const blob = file.slice(start, end);
+      const reader = new FileReader();
+      
+      reader.onload = (e) => {
+        const bytes = new Uint8Array(e.target.result);
+        // Sample bytes from this chunk
+        const sampleStep = Math.max(1, Math.floor(bytes.length / Math.min(bytes.length, 256)));
+        for (let i = 0; i < bytes.length && samples.length < MAX_SAMPLES; i += sampleStep) {
+          samples.push(bytes[i]);
+        }
+        chunkIndex += step;
+        // Yield to UI between chunks
+        requestAnimationFrame(readNextChunk);
+      };
+      reader.readAsArrayBuffer(blob);
+    }
+    
+    readNextChunk();
+  }
 }
 
 // Presets
