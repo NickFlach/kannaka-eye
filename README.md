@@ -12,7 +12,7 @@ Every piece of data has an intrinsic geometric fingerprint when viewed through t
 
 - **Multi-layer canvas visualization**: 6 distinct rendering layers from background geometry to metadata overlays
 - **Real-time glyph evolution**: Watch glyphs grow and change as you type or upload data
-- **SGA-powered classification**: 96-class system with Fano plane geometry and fold sequences
+- **SGA-powered classification**: 84-class system with Fano plane geometry and fold sequences
 - **Export capabilities**: Save as PNG, export glyph data, share via URL encoding
 - **Multiple input methods**: Text, file upload, preset examples
 - **Responsive design**: Works beautifully on desktop and mobile
@@ -39,13 +39,13 @@ Technical details including Fano signatures, SGA centroids, and musical frequenc
 
 ## SGA Mathematics
 
-Built on the 96-class Sigmatics Geometric Algebra system:
+Built on the 84-class Sigmatics Geometric Algebra system:
 
 - **h₂ (0..3)**: Frequency band classification (bass, tenor, alto, soprano)  
 - **d (0..2)**: Modality (experienced, learned, imagined)
 - **ℓ (0..7)**: Context slot with Fano plane structure
 - **Fano Lines**: 7 oriented triples forming the geometric backbone
-- **Fold Sequences**: Paths through the 96-class space showing data evolution
+- **Fold Sequences**: Paths through the 84-class space showing data evolution
 
 ## Quick Start
 

@@ -47,7 +47,7 @@ const FANO_COLORS = [
 ];
 
 /**
- * Classify arbitrary data into SGA 96-class system
+ * Classify arbitrary data into SGA 84-class system
  * Returns class_index (0..95) with components (h2, d, l)
  */
 function classifyData(bytes) {
@@ -92,11 +92,11 @@ function classifyData(bytes) {
   
   // ── l (0..7): context from hash and shape ──
   const contentHash = bytes.reduce((hash, b) => ((hash << 5) - hash + b) & 0xffffffff, 0);
-  const l = Math.abs(contentHash) % 8;
+  const l = Math.abs(contentHash) % 7;
   
-  // Compute class index: class_index = 24*h2 + 8*d + l
-  const classIndex = 24 * h2 + 8 * d + l;
-  return Math.min(95, classIndex);
+  // Compute class index: class_index = 21*h2 + 7*d + l
+  const classIndex = 21 * h2 + 7 * d + l;
+  return Math.min(83, classIndex);
 }
 
 /**
@@ -184,12 +184,12 @@ function calculateEntropy(bytes) {
  * Decode class index to components (h2, d, l)
  */
 function decodeClassIndex(classIndex) {
-  if (classIndex > 95) classIndex = 95;
+  if (classIndex > 83) classIndex = 95;
   
-  const h2 = Math.floor(classIndex / 24);
-  const remainder = classIndex % 24;
-  const d = Math.floor(remainder / 8);
-  const l = remainder % 8;
+  const h2 = Math.floor(classIndex / 21);
+  const remainder = classIndex % 21;
+  const d = Math.floor(remainder / 7);
+  const l = remainder % 7;
   
   return { h2, d, l };
 }
@@ -856,12 +856,12 @@ const FANO_LINES_CLIENT = ${JSON.stringify(FANO_LINES)};
 const FANO_COLORS_CLIENT = ${JSON.stringify(FANO_COLORS)};
 
 function decodeClassIndexClient(classIndex) {
-  if (classIndex > 95) classIndex = 95;
+  if (classIndex > 83) classIndex = 95;
   
-  const h2 = Math.floor(classIndex / 24);
-  const remainder = classIndex % 24;
-  const d = Math.floor(remainder / 8);
-  const l = remainder % 8;
+  const h2 = Math.floor(classIndex / 21);
+  const remainder = classIndex % 21;
+  const d = Math.floor(remainder / 7);
+  const l = remainder % 7;
   
   return { h2, d, l };
 }
@@ -1586,7 +1586,7 @@ server.listen(PORT, () => {
   console.log(`   See the geometry of information`);
   console.log(`\n   🎯 Features:`);
   console.log(`   • Real-time glyph visualization`);
-  console.log(`   • SGA-powered 96-class system`);
+  console.log(`   • SGA-powered 84-class system`);
   console.log(`   • 6-layer canvas rendering`);
   console.log(`   • Text, file, and preset inputs`);
   console.log(`   • PNG export and data sharing`);
