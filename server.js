@@ -1533,7 +1533,7 @@ function handleFile(file) {
 function initializePresets() {
   const presets = ${JSON.stringify(presets)};
   const container = document.getElementById('presetContainer');
-  
+
   for (const [name, preset] of Object.entries(presets)) {
     const btn = document.createElement('button');
     btn.className = 'preset-btn';
@@ -1549,6 +1549,30 @@ function initializePresets() {
     });
     container.appendChild(btn);
   }
+
+  // Radio preset — live perception from kannaka-radio
+  const radioBtn = document.createElement('button');
+  radioBtn.className = 'preset-btn';
+  radioBtn.style.borderColor = '#f59e0b';
+  radioBtn.innerHTML = \`
+    <div class="preset-name" style="color:#f59e0b">Radio</div>
+    <div class="preset-desc">Live glyph from kannaka-radio</div>
+  \`;
+  radioBtn.addEventListener('click', async () => {
+    try {
+      radioBtn.querySelector('.preset-desc').textContent = 'Connecting...';
+      const res = await fetch('/api/radio');
+      if (!res.ok) throw new Error('Radio not reachable');
+      const radio = await res.json();
+      if (radio.error) throw new Error(radio.error);
+      radioBtn.querySelector('.preset-desc').textContent =
+        radio.track + ' (' + radio.featureCount + ' features)';
+      processInput(radio.features, 'bytes');
+    } catch (e) {
+      radioBtn.querySelector('.preset-desc').textContent = e.message;
+    }
+  });
+  container.appendChild(radioBtn);
 }
 
 // Initialize
@@ -1708,6 +1732,96 @@ const server = http.createServer((req, res) => {
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: error.message }));
       }
+    });
+    return;
+  }
+
+  // API: Fetch radio perception from Flux or direct radio API
+  if (parsed.pathname === "/api/radio" && req.method === "GET") {
+    const radioPort = process.env.RADIO_PORT || 8888;
+    const radioUrl = `http://localhost:${radioPort}/api/perception`;
+
+    const radioReq = http.get(radioUrl, { timeout: 3000 }, (radioRes) => {
+      let data = "";
+      radioRes.on("data", chunk => data += chunk);
+      radioRes.on("end", () => {
+        try {
+          const perception = JSON.parse(data);
+          // Convert perception features to bytes for classification
+          const features = [];
+          if (perception.mel_spectrogram) {
+            for (const v of perception.mel_spectrogram) {
+              features.push(Math.min(255, Math.max(0, Math.round(v * 255))));
+            }
+          }
+          if (perception.mfcc) {
+            for (const v of perception.mfcc) {
+              features.push(Math.min(255, Math.max(0, Math.round((v + 1) * 127.5))));
+            }
+          }
+          // Add tempo, valence, energy as bytes
+          if (perception.tempo_bpm) features.push(Math.min(255, Math.round(perception.tempo_bpm)));
+          if (perception.valence != null) features.push(Math.round(perception.valence * 255));
+          if (perception.rms_energy != null) features.push(Math.round(perception.rms_energy * 255));
+
+          if (features.length === 0) {
+            // Fallback: hash the perception JSON
+            const json = JSON.stringify(perception);
+            for (let i = 0; i < json.length; i++) features.push(json.charCodeAt(i) % 256);
+          }
+
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            source: "kannaka-radio",
+            track: perception.track_title || perception.title || "unknown",
+            album: perception.album || "unknown",
+            features: features,
+            featureCount: features.length,
+            radioPort,
+          }));
+        } catch (e) {
+          res.writeHead(502, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Failed to parse radio perception", detail: e.message }));
+        }
+      });
+    });
+    radioReq.on("error", () => {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Radio not reachable", radioUrl }));
+    });
+    radioReq.on("timeout", () => {
+      radioReq.destroy();
+      res.writeHead(504, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Radio timeout" }));
+    });
+    return;
+  }
+
+  // API: Constellation status
+  if (parsed.pathname === "/api/constellation" && req.method === "GET") {
+    const checks = { eye: true, classifier: KANNAKA_BIN ? "native" : "fallback" };
+
+    // Check radio
+    const radioPort = process.env.RADIO_PORT || 8888;
+    const radioCheck = new Promise((resolve) => {
+      const r = http.get(`http://localhost:${radioPort}/api/state`, { timeout: 2000 }, (res) => {
+        let d = "";
+        res.on("data", c => d += c);
+        res.on("end", () => { try { resolve(JSON.parse(d)); } catch { resolve(null); } });
+      });
+      r.on("error", () => resolve(null));
+      r.on("timeout", () => { r.destroy(); resolve(null); });
+    });
+
+    radioCheck.then((radioState) => {
+      checks.radio = radioState ? {
+        running: true,
+        currentAlbum: radioState.currentAlbum,
+        track: radioState.playlist?.[radioState.currentTrackIdx]?.title,
+      } : { running: false };
+
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(checks));
     });
     return;
   }
