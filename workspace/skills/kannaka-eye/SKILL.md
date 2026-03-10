@@ -4,10 +4,13 @@ description: >
   Glyph viewer that renders the SGA geometric fingerprint of any data as a
   stunning multi-layer canvas visualization. Takes text, files, or raw bytes
   and produces living glyphs using the 84-class Sigmatics Geometric Algebra
-  system (Cl₀,₇ ⊗ ℝ[ℤ₄] ⊗ ℝ[ℤ₃]) with Fano plane topology. Use when you
-  need to visualize information geometry, inspect glyph structure, export
-  glyph PNGs, or render the constellation's visual language. Single-file
-  Node.js server — zero dependencies.
+  system (Cl₀,₇ ⊗ ℝ[ℤ₄] ⊗ ℝ[ℤ₃]) with Fano plane topology. Includes
+  native Rust classifier integration (via kannaka-memory binary),
+  constellation dashboard showing service health, share links for glyph
+  exchange, and a radio perception bridge that converts audio features to
+  classifiable bytes. Use when you need to visualize information geometry,
+  inspect glyph structure, export glyph PNGs, or render the constellation's
+  visual language. Single-file Node.js server — zero dependencies.
 metadata:
   openclaw:
     requires:
@@ -20,6 +23,10 @@ metadata:
         - name: kannaka
           label: "kannaka binary — for real SGA classification (falls back to built-in classifier)"
       env:
+        - name: KANNAKA_BIN
+          label: "Path to kannaka binary for native SGA classification"
+        - name: RADIO_PORT
+          label: "Radio bridge endpoint port (default: 8888)"
         - name: EYE_PORT
           label: "HTTP port for the viewer (default: 3333)"
         - name: FLUX_URL
@@ -34,6 +41,12 @@ metadata:
         description: "Glyph render events published to Flux (fano_preview, sga_class, source_type)"
         remote: true
         condition: "FLUX_URL is set"
+      - id: constellation-svg
+        description: "Fano plane SVG with service status at /api/constellation.svg"
+        remote: false
+      - id: radio-bridge
+        description: "Fetches perception from kannaka-radio and converts to classifiable bytes"
+        remote: false
     install:
       - id: no-install
         kind: manual
@@ -105,6 +118,29 @@ Each line connects 3 of the 7 points in the smallest finite projective plane (PG
 **Fold Sequences:** Paths through the 84-class space showing how data evolves
 across geometric neighborhoods. Rendered as flowing Bezier curves.
 
+### Native Classification
+
+When `KANNAKA_BIN` is set (or auto-detected at `../kannaka-memory/target/release/kannaka.exe`), Eye uses the canonical Rust SGA classifier instead of the built-in JS approximation. The API response includes `"classifier": "native"` or `"classifier": "fallback"`.
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `GET /` | GET | Glyph viewer (main UI) |
+| `POST /api/process` | POST | Classify data → glyph JSON |
+| `GET /api/radio` | GET | Fetch Radio perception as classifiable bytes |
+| `GET /api/constellation` | GET | Constellation status (eye, radio, memory) |
+| `GET /api/constellation.svg` | GET | Fano plane SVG with service dots |
+| `GET /constellation` | GET | Health dashboard page |
+
+### Share Links
+
+Compact glyph data encoded as base64 in URL hash: `http://localhost:3333/#glyph=<base64>`
+
+### Constellation Dashboard
+
+`/constellation` serves a live health dashboard showing all three services with auto-refresh every 10 seconds.
+
 ## Export
 
 - **Save as PNG** — 2x resolution canvas export
@@ -116,6 +152,8 @@ across geometric neighborhoods. Rendered as flowing Bezier curves.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `EYE_PORT` | `3333` | HTTP port for the viewer |
+| `KANNAKA_BIN` | auto-detect | Path to kannaka binary for native classification |
+| `RADIO_PORT` | `8888` | Radio bridge endpoint port |
 | `FLUX_URL` | — | Flux instance URL (enables event publishing) |
 | `FLUX_AGENT_ID` | `kannaka-eye` | Agent ID for Flux events |
 
