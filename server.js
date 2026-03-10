@@ -14,12 +14,107 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const url = require("url");
+const { execFile } = require("child_process");
 
 // ── Config ─────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
 const portIdx = args.indexOf("--port");
 const PORT = portIdx >= 0 ? parseInt(args[portIdx + 1]) || 3333 : 3333;
+
+// Kannaka binary path — auto-detect or use env var
+const KANNAKA_BIN = process.env.KANNAKA_BIN ||
+  (() => {
+    const candidates = [
+      path.join(__dirname, "..", "kannaka-memory", "target", "release", process.platform === "win32" ? "kannaka.exe" : "kannaka"),
+      path.join(__dirname, "..", "kannaka-memory", "target", "debug", process.platform === "win32" ? "kannaka.exe" : "kannaka"),
+    ];
+    for (const c of candidates) {
+      if (fs.existsSync(c)) return c;
+    }
+    return null;
+  })();
+
+if (KANNAKA_BIN) {
+  console.log(`[eye] Native classifier: ${KANNAKA_BIN}`);
+} else {
+  console.log(`[eye] Native classifier not found — using JS fallback`);
+}
+
+// Flux configuration (disabled by default — privacy first)
+const FLUX_URL = process.env.FLUX_URL || null;
+const FLUX_AGENT_ID = process.env.FLUX_AGENT_ID || "kannaka-eye";
+let lastFluxPublish = 0;
+
+/**
+ * Attempt native classification via the kannaka binary.
+ * Returns a Promise that resolves to the parsed JSON or null on failure.
+ */
+function classifyNative(inputBuffer) {
+  if (!KANNAKA_BIN) return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    const child = execFile(KANNAKA_BIN, ["classify"], {
+      timeout: 5000,
+      maxBuffer: 1024 * 1024,
+    }, (err, stdout) => {
+      if (err) {
+        resolve(null);
+        return;
+      }
+      try {
+        resolve(JSON.parse(stdout.trim()));
+      } catch {
+        resolve(null);
+      }
+    });
+    child.stdin.write(inputBuffer);
+    child.stdin.end();
+  });
+}
+
+/**
+ * Publish a GlyphPublished event to Flux (ADR-0015 schema).
+ * Fire-and-forget with throttle (max 1/sec).
+ */
+function publishGlyphToFlux(glyphResponse) {
+  if (!FLUX_URL) return;
+  const now = Date.now();
+  if (now - lastFluxPublish < 1000) return;
+  lastFluxPublish = now;
+
+  const payload = JSON.stringify({
+    entity_id: "pure-jade/eye-glyph",
+    properties: {
+      glyph_id: glyphResponse.dominantClass.toString(16).padStart(2, "0"),
+      fano_preview: glyphResponse.fanoSignature,
+      source_type: glyphResponse.sourceType || "text",
+      agent_id: FLUX_AGENT_ID,
+      dominant_class: glyphResponse.dominantClass,
+      classes_used: glyphResponse.classesUsed,
+      centroid: glyphResponse.centroid,
+      processed_at: glyphResponse.processedAt,
+    }
+  });
+
+  const fluxUrl = new URL(FLUX_URL.replace(/\/$/, "") + "/api/events");
+  const options = {
+    hostname: fluxUrl.hostname,
+    port: fluxUrl.port || (fluxUrl.protocol === "https:" ? 443 : 80),
+    path: fluxUrl.pathname,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(payload),
+    },
+  };
+
+  const transport = fluxUrl.protocol === "https:" ? require("https") : http;
+  const req = transport.request(options, () => {});
+  req.on("error", () => {}); // fire-and-forget
+  req.write(payload);
+  req.end();
+}
 
 // ── SGA (Sigmatics Geometric Algebra) System ──────────────
 
@@ -1488,84 +1583,125 @@ const server = http.createServer((req, res) => {
   if (parsed.pathname === "/api/process" && req.method === "POST") {
     let body = "";
     req.on("data", chunk => body += chunk);
-    req.on("end", () => {
+    req.on("end", async () => {
       try {
         const { data, type } = JSON.parse(body);
-        
-        let classifiedData = [];
-        
+
+        // Prepare raw bytes for native classifier
+        let rawBytes;
         if (type === "text") {
-          classifiedData = classifyText(data);
+          rawBytes = Buffer.from(data, "utf-8");
         } else if (type === "bytes") {
-          classifiedData = data.map((byte, i) => ({
-            value: byte,
-            position: i,
-            classIndex: classifyData([byte]),
-            components: decodeClassIndex(classifyData([byte]))
-          }));
+          rawBytes = Buffer.from(data);
         } else if (type === "numbers") {
-          classifiedData = classifyNumbers(data);
+          // Pack as float64 bytes
+          const buf = Buffer.alloc(data.length * 8);
+          for (let i = 0; i < data.length; i++) buf.writeDoubleBE(data[i], i * 8);
+          rawBytes = buf;
         } else {
           throw new Error("Unknown data type: " + type);
         }
-        
-        // Create fold sequence
-        const foldSequence = createFoldSequence(classifiedData);
-        
-        // Compute derived metrics
-        const fanoSignature = computeFanoSignature(foldSequence);
-        const frequencies = sequenceToFrequencies(foldSequence);
-        
-        // Statistics
-        const uniqueClasses = new Set(foldSequence.sequence).size;
-        const totalEnergy = foldSequence.amplitudes.reduce((sum, a) => sum + a, 0) / foldSequence.amplitudes.length;
-        
-        // Centroid calculation
-        const h2Sum = classifiedData.reduce((sum, item) => sum + item.components.h2, 0);
-        const dSum = classifiedData.reduce((sum, item) => sum + item.components.d, 0);
-        const lSum = classifiedData.reduce((sum, item) => sum + item.components.l, 0);
-        const count = classifiedData.length;
-        
-        const centroid = {
-          h2: Math.round(h2Sum / count) % 4,
-          d: Math.round(dSum / count) % 3,
-          l: Math.round(lSum / count) % 8
-        };
-        
-        // Level distribution for resonance rings
-        const levelDistribution = new Array(8).fill(0);
-        for (const item of classifiedData) {
-          levelDistribution[item.components.l] += 1;
+
+        // Try native classification first
+        const nativeResult = await classifyNative(rawBytes);
+
+        let response;
+        if (nativeResult) {
+          // Use native Rust classifier output
+          const levelDistribution = new Array(8).fill(0);
+          for (const cls of nativeResult.fold_sequence) {
+            levelDistribution[cls % 8] += 1;
+          }
+          const total = nativeResult.fold_sequence.length || 1;
+          for (let i = 0; i < levelDistribution.length; i++) levelDistribution[i] /= total;
+
+          response = {
+            foldSequence: nativeResult.fold_sequence,
+            amplitudes: nativeResult.amplitudes,
+            phases: nativeResult.phases,
+            fanoSignature: nativeResult.fano_signature,
+            frequencies: nativeResult.frequencies,
+            centroid: nativeResult.centroid,
+            classesUsed: nativeResult.classes_used,
+            totalEnergy: nativeResult.amplitudes.reduce((s, a) => s + a, 0) / (nativeResult.amplitudes.length || 1),
+            compressionRatio: nativeResult.compression_ratio,
+            dominantClass: nativeResult.dominant_class,
+            levelDistribution,
+            processedAt: new Date().toISOString(),
+            classifier: "native",
+            sourceType: nativeResult.source_type || type,
+          };
+        } else {
+          // Fallback to JS classifier
+          let classifiedData = [];
+
+          if (type === "text") {
+            classifiedData = classifyText(data);
+          } else if (type === "bytes") {
+            classifiedData = data.map((byte, i) => ({
+              value: byte,
+              position: i,
+              classIndex: classifyData([byte]),
+              components: decodeClassIndex(classifyData([byte]))
+            }));
+          } else if (type === "numbers") {
+            classifiedData = classifyNumbers(data);
+          }
+
+          const foldSequence = createFoldSequence(classifiedData);
+          const fanoSignature = computeFanoSignature(foldSequence);
+          const frequencies = sequenceToFrequencies(foldSequence);
+          const uniqueClasses = new Set(foldSequence.sequence).size;
+          const totalEnergy = foldSequence.amplitudes.reduce((sum, a) => sum + a, 0) / foldSequence.amplitudes.length;
+
+          const h2Sum = classifiedData.reduce((sum, item) => sum + item.components.h2, 0);
+          const dSum = classifiedData.reduce((sum, item) => sum + item.components.d, 0);
+          const lSum = classifiedData.reduce((sum, item) => sum + item.components.l, 0);
+          const count = classifiedData.length;
+
+          const centroid = {
+            h2: Math.round(h2Sum / count) % 4,
+            d: Math.round(dSum / count) % 3,
+            l: Math.round(lSum / count) % 8
+          };
+
+          const levelDistribution = new Array(8).fill(0);
+          for (const item of classifiedData) {
+            levelDistribution[item.components.l] += 1;
+          }
+          for (let i = 0; i < levelDistribution.length; i++) {
+            levelDistribution[i] /= count;
+          }
+
+          const classCounts = {};
+          for (const classIndex of foldSequence.sequence) {
+            classCounts[classIndex] = (classCounts[classIndex] || 0) + 1;
+          }
+          const dominantClass = Object.keys(classCounts).reduce((a, b) =>
+            classCounts[a] > classCounts[b] ? a : b
+          );
+
+          response = {
+            foldSequence: foldSequence.sequence,
+            amplitudes: foldSequence.amplitudes,
+            phases: foldSequence.phases,
+            fanoSignature,
+            frequencies,
+            centroid,
+            classesUsed: uniqueClasses,
+            totalEnergy,
+            compressionRatio: classifiedData.length / foldSequence.sequence.length,
+            dominantClass: parseInt(dominantClass),
+            levelDistribution,
+            processedAt: new Date().toISOString(),
+            classifier: "fallback",
+            sourceType: type,
+          };
         }
-        // Normalize
-        for (let i = 0; i < levelDistribution.length; i++) {
-          levelDistribution[i] /= count;
-        }
-        
-        // Find dominant class
-        const classCounts = {};
-        for (const classIndex of foldSequence.sequence) {
-          classCounts[classIndex] = (classCounts[classIndex] || 0) + 1;
-        }
-        const dominantClass = Object.keys(classCounts).reduce((a, b) => 
-          classCounts[a] > classCounts[b] ? a : b
-        );
-        
-        const response = {
-          foldSequence: foldSequence.sequence,
-          amplitudes: foldSequence.amplitudes,
-          phases: foldSequence.phases,
-          fanoSignature,
-          frequencies,
-          centroid,
-          classesUsed: uniqueClasses,
-          totalEnergy,
-          compressionRatio: classifiedData.length / foldSequence.sequence.length,
-          dominantClass: parseInt(dominantClass),
-          levelDistribution,
-          processedAt: new Date().toISOString()
-        };
-        
+
+        // Publish to Flux (fire-and-forget, throttled)
+        publishGlyphToFlux(response);
+
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(response));
       } catch (error) {
