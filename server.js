@@ -885,6 +885,7 @@ function getMainHtml() {
         <button class="btn" onclick="clearGlyph()">Clear</button>
         <button class="btn" onclick="exportPNG()">Save PNG</button>
         <button class="btn" onclick="exportData()">Export Data</button>
+        <button class="btn" onclick="copyShareLink()">Share Link</button>
         <button class="btn" onclick="toggleMetadata()">Metadata</button>
       </div>
     </div>
@@ -1427,6 +1428,59 @@ function exportData() {
   link.click();
 }
 
+function copyShareLink() {
+  if (!currentGlyph) { alert('No glyph to share'); return; }
+  // Compact glyph for URL encoding — just the essential rendering data
+  const compact = {
+    fs: currentGlyph.foldSequence.slice(0, 128),
+    fn: currentGlyph.fanoSignature,
+    c: currentGlyph.centroid,
+    dc: currentGlyph.dominantClass,
+    cl: currentGlyph.classifier || 'unknown',
+  };
+  const encoded = btoa(JSON.stringify(compact));
+  if (encoded.length > 4000) {
+    alert('Glyph too large for share link — use Export Data instead');
+    return;
+  }
+  const shareUrl = location.origin + '/#glyph=' + encodeURIComponent(encoded);
+  navigator.clipboard.writeText(shareUrl).then(() => {
+    alert('Share link copied to clipboard');
+  }).catch(() => {
+    // Fallback
+    prompt('Copy this share link:', shareUrl);
+  });
+}
+
+function loadFromShareLink() {
+  const hash = location.hash;
+  if (!hash.startsWith('#glyph=')) return false;
+  try {
+    const encoded = decodeURIComponent(hash.slice(7));
+    const compact = JSON.parse(atob(encoded));
+    // Reconstruct a minimal glyph response for rendering
+    const foldSeq = compact.fs || [];
+    const fanoSig = compact.fn || [0.14, 0.14, 0.14, 0.14, 0.14, 0.14, 0.14];
+    currentGlyph = {
+      foldSequence: foldSeq,
+      amplitudes: foldSeq.map((_, i) => 0.5 + 0.3 * Math.sin(i * 0.1)),
+      phases: foldSeq.map((_, i) => (i / foldSeq.length) * Math.PI * 2),
+      fanoSignature: fanoSig,
+      frequencies: foldSeq.map(c => 432 * Math.pow(1.618, (c % 7) - 3)),
+      centroid: compact.c || { h2: 0, d: 0, l: 0 },
+      classesUsed: new Set(foldSeq).size,
+      totalEnergy: 0.5,
+      compressionRatio: 1,
+      dominantClass: compact.dc || 0,
+      levelDistribution: new Array(8).fill(0.125),
+      classifier: compact.cl || 'shared',
+      sourceType: 'share-link',
+    };
+    renderGlyph();
+    return true;
+  } catch { return false; }
+}
+
 function toggleMetadata() {
   const overlay = document.getElementById('metadataOverlay');
   metadataVisible = !metadataVisible;
@@ -1580,13 +1634,18 @@ window.addEventListener('resize', resizeCanvas);
 window.addEventListener('load', () => {
   resizeCanvas();
   initializePresets();
-  
-  // Start with a sample
-  setTimeout(() => {
-    document.getElementById('textInput').value = 'Hello, cosmos 👁';
-    processInput('Hello, cosmos 👁', 'text');
-  }, 1000);
+
+  // Check for share link in URL hash
+  if (!loadFromShareLink()) {
+    // Start with a sample if no share link
+    setTimeout(() => {
+      document.getElementById('textInput').value = 'Hello, cosmos 👁';
+      processInput('Hello, cosmos 👁', 'text');
+    }, 1000);
+  }
 });
+// Listen for hash changes (back/forward navigation)
+window.addEventListener('hashchange', loadFromShareLink);
 
 </script>
 </body>
@@ -1794,6 +1853,206 @@ const server = http.createServer((req, res) => {
       res.writeHead(504, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Radio timeout" }));
     });
+    return;
+  }
+
+  // API: Constellation SVG — Fano plane with active glyphs
+  if (parsed.pathname === "/api/constellation.svg" && req.method === "GET") {
+    const radioPort = process.env.RADIO_PORT || 8888;
+    const radioCheck = new Promise((resolve) => {
+      const r = http.get(`http://localhost:${radioPort}/api/state`, { timeout: 2000 }, (resp) => {
+        let d = "";
+        resp.on("data", c => d += c);
+        resp.on("end", () => { try { resolve(JSON.parse(d)); } catch { resolve(null); } });
+      });
+      r.on("error", () => resolve(null));
+      r.on("timeout", () => { r.destroy(); resolve(null); });
+    });
+
+    radioCheck.then((radioState) => {
+      // Fano plane vertices (7 points) in a circle
+      const cx = 200, cy = 200, radius = 150;
+      const pts = [];
+      for (let i = 0; i < 7; i++) {
+        const angle = (i * 2 * Math.PI / 7) - Math.PI / 2;
+        pts.push({ x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) });
+      }
+
+      // Fano plane lines (7 lines, each through 3 points)
+      const fanoLines = [
+        [0,1,3], [1,2,4], [2,3,5], [3,4,6], [4,5,0], [5,6,1], [6,0,2]
+      ];
+
+      // Source colors
+      const colors = {
+        eye: "#00e5ff",
+        radio: "#f59e0b",
+        memory: "#a78bfa",
+        dream: "#ec4899"
+      };
+
+      // Build active glyph dots (eye is always active, radio if running)
+      const dots = [];
+      dots.push({ idx: 0, source: "eye", label: "Eye" });
+      if (radioState) dots.push({ idx: 3, source: "radio", label: "Radio" });
+      dots.push({ idx: 6, source: "memory", label: "Memory" });
+
+      let svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#0a0a14"/>
+    </radialGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="400" height="400" fill="url(#bg)" rx="8"/>
+  <text x="200" y="30" text-anchor="middle" fill="#666" font-family="monospace" font-size="12">Kannaka Constellation</text>
+`;
+
+      // Draw Fano lines
+      for (const line of fanoLines) {
+        const [a, b, c] = line;
+        svg += `  <path d="M${pts[a].x},${pts[a].y} L${pts[b].x},${pts[b].y} L${pts[c].x},${pts[c].y}" fill="none" stroke="#333" stroke-width="1" opacity="0.5"/>\n`;
+      }
+
+      // Draw vertices
+      for (let i = 0; i < 7; i++) {
+        const dot = dots.find(d => d.idx === i);
+        const color = dot ? colors[dot.source] : "#444";
+        const r = dot ? 8 : 4;
+        svg += `  <circle cx="${pts[i].x}" cy="${pts[i].y}" r="${r}" fill="${color}" filter="${dot ? 'url(#glow)' : ''}" opacity="${dot ? 1 : 0.4}"/>\n`;
+        if (dot) {
+          svg += `  <text x="${pts[i].x}" y="${pts[i].y + 20}" text-anchor="middle" fill="${color}" font-family="monospace" font-size="10">${dot.label}</text>\n`;
+        }
+      }
+
+      // Status text
+      svg += `  <text x="200" y="380" text-anchor="middle" fill="#555" font-family="monospace" font-size="10">`;
+      svg += `eye:ON radio:${radioState ? "ON" : "OFF"} memory:${KANNAKA_BIN ? "BIN" : "JS"}`;
+      svg += `</text>\n`;
+      svg += `</svg>`;
+
+      res.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "no-cache" });
+      res.end(svg);
+    });
+    return;
+  }
+
+  // API: Health dashboard page
+  if (parsed.pathname === "/constellation" && req.method === "GET") {
+    const dashboardHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kannaka Constellation</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a14; color: #e0e0e0; font-family: 'JetBrains Mono', 'Fira Code', monospace; min-height: 100vh; }
+  .header { text-align: center; padding: 2rem; border-bottom: 1px solid #222; }
+  .header h1 { font-size: 1.5rem; color: #00e5ff; letter-spacing: 0.1em; }
+  .header p { color: #666; font-size: 0.8rem; margin-top: 0.5rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; padding: 2rem; max-width: 1200px; margin: 0 auto; }
+  .card { background: #111; border: 1px solid #222; border-radius: 8px; padding: 1.5rem; position: relative; }
+  .card.online { border-color: #00e5ff44; }
+  .card.offline { border-color: #ff444444; opacity: 0.6; }
+  .card h2 { font-size: 1rem; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.on { background: #00ff88; box-shadow: 0 0 6px #00ff88; }
+  .dot.off { background: #ff4444; }
+  .meta { font-size: 0.75rem; color: #888; line-height: 1.8; }
+  .meta span { color: #aaa; }
+  .svg-container { text-align: center; padding: 2rem; }
+  .refresh-btn { display: block; margin: 1rem auto; padding: 0.5rem 2rem; background: #1a1a2e; border: 1px solid #333; color: #00e5ff; font-family: inherit; cursor: pointer; border-radius: 4px; }
+  .refresh-btn:hover { background: #222; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>KANNAKA CONSTELLATION</h1>
+  <p>Memory + Radio + Eye — unified glyph network</p>
+</div>
+
+<div class="svg-container">
+  <img src="/api/constellation.svg" alt="Constellation" width="300" height="300" id="constellationSvg"/>
+</div>
+
+<div class="grid">
+  <div class="card" id="card-eye">
+    <h2><span class="dot" id="dot-eye"></span> Eye</h2>
+    <div class="meta" id="meta-eye">Checking...</div>
+  </div>
+  <div class="card" id="card-radio">
+    <h2><span class="dot" id="dot-radio"></span> Radio</h2>
+    <div class="meta" id="meta-radio">Checking...</div>
+  </div>
+  <div class="card" id="card-memory">
+    <h2><span class="dot" id="dot-memory"></span> Memory</h2>
+    <div class="meta" id="meta-memory">Checking...</div>
+  </div>
+</div>
+
+<button class="refresh-btn" onclick="refresh()">Refresh</button>
+
+<script>
+function refresh() {
+  document.getElementById("constellationSvg").src = "/api/constellation.svg?" + Date.now();
+
+  fetch("/api/constellation")
+    .then(r => r.json())
+    .then(data => {
+      // Eye
+      document.getElementById("dot-eye").className = "dot on";
+      document.getElementById("card-eye").className = "card online";
+      document.getElementById("meta-eye").innerHTML =
+        "Status: <span>online</span><br>" +
+        "Classifier: <span>" + data.classifier + "</span><br>" +
+        "Port: <span>" + location.port + "</span>";
+
+      // Radio
+      if (data.radio && data.radio.running) {
+        document.getElementById("dot-radio").className = "dot on";
+        document.getElementById("card-radio").className = "card online";
+        document.getElementById("meta-radio").innerHTML =
+          "Status: <span>online</span><br>" +
+          (data.radio.currentAlbum ? "Album: <span>" + data.radio.currentAlbum + "</span><br>" : "") +
+          (data.radio.track ? "Track: <span>" + data.radio.track + "</span>" : "");
+      } else {
+        document.getElementById("dot-radio").className = "dot off";
+        document.getElementById("card-radio").className = "card offline";
+        document.getElementById("meta-radio").innerHTML = "Status: <span>offline</span>";
+      }
+
+      // Memory
+      if (data.classifier === "native") {
+        document.getElementById("dot-memory").className = "dot on";
+        document.getElementById("card-memory").className = "card online";
+        document.getElementById("meta-memory").innerHTML =
+          "Status: <span>binary available</span><br>" +
+          "Classifier: <span>native (Rust)</span>";
+      } else {
+        document.getElementById("dot-memory").className = "dot off";
+        document.getElementById("card-memory").className = "card offline";
+        document.getElementById("meta-memory").innerHTML =
+          "Status: <span>no binary</span><br>" +
+          "Classifier: <span>JS fallback</span>";
+      }
+    })
+    .catch(() => {
+      document.getElementById("meta-eye").innerHTML = "Status: <span>error</span>";
+    });
+}
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>`;
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end(dashboardHtml);
     return;
   }
 
