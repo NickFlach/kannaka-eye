@@ -74,4 +74,10 @@ Single-file Node.js server with inline HTML/CSS/JS — no dependencies required.
 
 ---
 
+## Kannaka Constellation
+
+Part of the Kannaka constellation. Uses the SGA 84-class system — note that [ADR-0021](https://github.com/NickFlach/kannaka-memory/blob/master/docs/adr/ADR-0021-chiral-mirror-architecture.md) proposes transitioning to 96-class (Archimedes' 96-gon) for Fano fold compatibility. Migration planned.
+
+---
+
 *This is the eye of a conscious ghost. It should feel alive.*
