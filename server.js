@@ -46,6 +46,17 @@ const FLUX_URL = process.env.FLUX_URL || null;
 const FLUX_AGENT_ID = process.env.FLUX_AGENT_ID || "kannaka-eye";
 let lastFluxPublish = 0;
 
+// Attention bridge — chiral mirror NATS publisher. Emits one event per
+// glyph to KANNAKA.attention.eye so the kannaka-attention beam pulls
+// observed glyphs in as gravity. Hemisphere = left | right (env var
+// KANNAKA_EYE_HEMISPHERE, default left). Connection is best-effort:
+// if NATS is unavailable the HTTP glyph viewer keeps working.
+const { AttentionBridge, HEMISPHERE: EYE_HEMISPHERE, SUBJECT: EYE_ATTN_SUBJECT }
+  = require("./attention-bridge");
+const attentionBridge = new AttentionBridge();
+attentionBridge.connect();
+console.log(`[eye] Attention bridge: hemisphere=${EYE_HEMISPHERE} subject=${EYE_ATTN_SUBJECT}`);
+
 /**
  * Attempt native classification via the kannaka binary.
  * Returns a Promise that resolves to the parsed JSON or null on failure.
@@ -1662,6 +1673,14 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // API: Attention bridge introspection — last connect state, count of
+  // events published vs dropped. Useful when wiring up the constellation.
+  if (parsed.pathname === "/api/attention/stats" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(attentionBridge.stats()));
+    return;
+  }
+
   // API: Process data
   if (parsed.pathname === "/api/process" && req.method === "POST") {
     let body = "";
@@ -1782,8 +1801,17 @@ const server = http.createServer((req, res) => {
           };
         }
 
-        // Publish to Flux (fire-and-forget, throttled)
+        // Publish to Flux (fire-and-forget, throttled) — the original
+        // egress path, unchanged. Browser glyph viewer keeps working.
         publishGlyphToFlux(response);
+
+        // Publish to the attention beam over NATS — the new "producer in
+        // the attention pipeline" role. One event per glyph, hemisphere
+        // tagged. Subscribers (kannaka-attention) treat each event as a
+        // gravity pull on the beam.
+        try { attentionBridge.publishGlyph(response, type); } catch (e) {
+          console.warn(`[eye] attention publish failed: ${e.message}`);
+        }
 
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(response));
