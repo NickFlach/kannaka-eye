@@ -1683,9 +1683,31 @@ const server = http.createServer((req, res) => {
 
   // API: Process data
   if (parsed.pathname === "/api/process" && req.method === "POST") {
+    // 4 MiB cap. Glyph/perception payloads sit well under 1 MiB; anything
+    // beyond is almost certainly a runaway client tab or a malicious peer
+    // (the handler then buffers a copy in raw bytes, so the actual peak is
+    // ~3-8× the request body — see #8).
+    const MAX_BODY = 4 * 1024 * 1024;
+    const clHeader = req.headers["content-length"];
+    if (clHeader && Number(clHeader) > MAX_BODY) {
+      res.writeHead(413, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "payload_too_large", max_bytes: MAX_BODY }));
+      return;
+    }
     let body = "";
-    req.on("data", chunk => body += chunk);
+    let aborted = false;
+    req.on("data", chunk => {
+      if (aborted) return;
+      body += chunk;
+      if (body.length > MAX_BODY) {
+        aborted = true;
+        res.writeHead(413, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "payload_too_large", max_bytes: MAX_BODY }));
+        req.destroy();
+      }
+    });
     req.on("end", async () => {
+      if (aborted) return;
       try {
         const { data, type } = JSON.parse(body);
 
@@ -1748,6 +1770,15 @@ const server = http.createServer((req, res) => {
             }));
           } else if (type === "numbers") {
             classifiedData = classifyNumbers(data);
+          }
+
+          // Empty input would crash the Object.keys reducer below (no
+          // initial value) and would also poison centroid with NaN via
+          // division-by-zero. Return a clean 400 instead. (#10)
+          if (classifiedData.length === 0) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "empty_input", message: "data classified to zero items; nothing to fold" }));
+            return;
           }
 
           const foldSequence = createFoldSequence(classifiedData);
@@ -1846,10 +1877,15 @@ const server = http.createServer((req, res) => {
               features.push(Math.min(255, Math.max(0, Math.round((v + 1) * 127.5))));
             }
           }
-          // Add tempo, valence, energy as bytes
-          if (perception.tempo_bpm) features.push(Math.min(255, Math.round(perception.tempo_bpm)));
-          if (perception.valence != null) features.push(Math.round(perception.valence * 255));
-          if (perception.rms_energy != null) features.push(Math.round(perception.rms_energy * 255));
+          // Add tempo, valence, energy as bytes — clamp both ends so a
+          // negative valence or runaway tempo can't poison classifyData
+          // (which requires byte ∈ [0,255] to land in any band, see #9).
+          // Valence is treated as bipolar [-1, 1] → [0, 255]; if a future
+          // radio profile emits unipolar [0, 1] this still clamps cleanly.
+          const clampByte = (v) => Math.max(0, Math.min(255, Math.round(v)));
+          if (perception.tempo_bpm != null) features.push(clampByte(perception.tempo_bpm));
+          if (perception.valence != null)   features.push(clampByte((perception.valence + 1) * 127.5));
+          if (perception.rms_energy != null) features.push(clampByte(perception.rms_energy * 255));
 
           if (features.length === 0) {
             // Fallback: hash the perception JSON
