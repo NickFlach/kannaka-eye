@@ -20,7 +20,14 @@ const { execFile } = require("child_process");
 
 const args = process.argv.slice(2);
 const portIdx = args.indexOf("--port");
-const PORT = portIdx >= 0 ? parseInt(args[portIdx + 1]) || 3333 : 3333;
+// Port resolution precedence: --port CLI arg > EYE_PORT env > 3333.
+// Pre-fix EYE_PORT was documented but ignored, leaving users with a
+// silently-wrong port across the skill, wrapper script, and direct
+// startup. (#2)
+const PORT =
+  (portIdx >= 0 ? parseInt(args[portIdx + 1], 10) : NaN) ||
+  parseInt(process.env.EYE_PORT, 10) ||
+  3333;
 
 // Kannaka binary path — auto-detect or use env var
 const KANNAKA_BIN = process.env.KANNAKA_BIN ||
@@ -1864,6 +1871,19 @@ const server = http.createServer((req, res) => {
       radioRes.on("data", chunk => data += chunk);
       radioRes.on("end", () => {
         try {
+          // Pre-fix: a non-2xx radio response was parsed as JSON and the
+          // error envelope (`{error: "radio_offline", ...}`) was passed
+          // through to classifyData, producing a confident-looking glyph
+          // built from the literal bytes of the error string. (#6)
+          if (radioRes.statusCode < 200 || radioRes.statusCode >= 300) {
+            res.writeHead(radioRes.statusCode === 404 ? 502 : (radioRes.statusCode || 502), { "Content-Type": "application/json" });
+            res.end(JSON.stringify({
+              error: "radio_upstream_error",
+              upstream_status: radioRes.statusCode,
+              detail: data.slice(0, 200),
+            }));
+            return;
+          }
           const perception = JSON.parse(data);
           // Convert perception features to bytes for classification
           const features = [];
@@ -1893,11 +1913,23 @@ const server = http.createServer((req, res) => {
             for (let i = 0; i < json.length; i++) features.push(json.charCodeAt(i) % 256);
           }
 
+          // Radio perception payloads commonly nest now-playing under
+          // `track_info` (Voice DJ flow) or `track` (track-change flow);
+          // the top-level keys are only populated on the legacy probe
+          // path. Read all three layers so the eye keeps the real title
+          // instead of "unknown". (#4)
+          const ti = perception.track_info || perception.track || {};
+          const trackTitle =
+            ti.title || ti.track_title ||
+            perception.track_title || perception.title || "unknown";
+          const albumTitle =
+            ti.album ||
+            perception.album || "unknown";
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({
             source: "kannaka-radio",
-            track: perception.track_title || perception.title || "unknown",
-            album: perception.album || "unknown",
+            track: trackTitle,
+            album: albumTitle,
             features: features,
             featureCount: features.length,
             radioPort,
