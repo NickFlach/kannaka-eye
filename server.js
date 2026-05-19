@@ -1893,8 +1893,14 @@ const server = http.createServer((req, res) => {
             }
           }
           if (perception.mfcc) {
+            // Kannaka-radio publishes MFCC normalized to [0, 1] (same scale
+            // as mel_spectrogram). Pre-fix this branch assumed bipolar
+            // [-1, 1] and applied `(v + 1) * 127.5`, so an MFCC value of 0
+            // landed at byte 128 (mid-range) instead of 0 — every glyph
+            // built from radio listening was skewed toward high MFCC.
+            // Match the mel_spectrogram mapping. (#7)
             for (const v of perception.mfcc) {
-              features.push(Math.min(255, Math.max(0, Math.round((v + 1) * 127.5))));
+              features.push(Math.min(255, Math.max(0, Math.round(v * 255))));
             }
           }
           // Add tempo, valence, energy as bytes — clamp both ends so a

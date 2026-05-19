@@ -110,9 +110,17 @@ class AttentionBridge {
       this._dropped++;
       return false;
     }
+    // Canonical envelope per consciousness-core/docs/nats-contract.yaml:
+    //   schema_version: "1.0" (string)
+    //   ts:             unix-ms (number)
+    //   agent_id:       publisher identity
+    // Pre-fix the eye emitted schema_version: 1 + ISO ts, forcing every
+    // downstream consumer to special-case the eye instead of treating
+    // it as a normal constellation producer. (#5)
     const envelope = {
-      schema_version: 1,
-      ts: new Date().toISOString(),
+      schema_version: "1.0",
+      ts: Date.now(),
+      agent_id: process.env.EYE_AGENT_ID || "kannaka-eye",
       source: SOURCE_NAME,
       hemisphere: HEMISPHERE,
       source_type: sourceType || glyph.sourceType || "unknown",
