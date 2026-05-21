@@ -1494,7 +1494,10 @@ function loadFromShareLink() {
       classifier: compact.cl || 'shared',
       sourceType: 'share-link',
     };
-    renderGlyph();
+    // Pass the reconstructed glyph explicitly — pre-fix renderGlyph()
+    // was called with no argument and ignored currentGlyph, so share-link
+    // restores produced an empty canvas. (#14)
+    renderGlyph(currentGlyph);
     return true;
   } catch { return false; }
 }
@@ -1558,10 +1561,17 @@ function handleFile(file) {
     };
     reader.readAsArrayBuffer(file);
   } else {
-    // Large files: sample evenly across the file
+    // Large files: sample evenly across the file.
+    // Pre-fix step was floor(totalChunks / (MAX_SAMPLES / chunkSize))
+    // which evaluated to roughly totalChunks * 1.3 for typical sizes,
+    // so the first iteration's chunkIndex += step jumped past
+    // totalChunks and the inner loop exited after one chunk. (#15)
+    // Now: pick a target sample-chunk count (capped at 100 to keep the
+    // read snappy), then step so the reads spread across the file.
     const chunkSize = 64 * 1024; // 64KB chunks
     const totalChunks = Math.ceil(file.size / chunkSize);
-    const step = Math.max(1, Math.floor(totalChunks / (MAX_SAMPLES / chunkSize)));
+    const targetSampleChunks = Math.min(totalChunks, 100);
+    const step = Math.max(1, Math.ceil(totalChunks / targetSampleChunks));
     const samples = [];
     let chunksRead = 0;
     let chunkIndex = 0;
@@ -1914,9 +1924,17 @@ const server = http.createServer((req, res) => {
           if (perception.rms_energy != null) features.push(clampByte(perception.rms_energy * 255));
 
           if (features.length === 0) {
-            // Fallback: hash the perception JSON
-            const json = JSON.stringify(perception);
-            for (let i = 0; i < json.length; i++) features.push(json.charCodeAt(i) % 256);
+            // No real perception fields. Pre-fix this path hashed whatever
+            // JSON arrived — including error envelopes like
+            // {"error":"radio_offline"} — into a confident-looking glyph.
+            // Now we refuse: if Radio didn't send any of the expected
+            // perception keys we treat it as an upstream failure. (#16)
+            res.writeHead(502, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({
+              error: "radio_no_perception_fields",
+              detail: "upstream response lacked mel_spectrogram, mfcc, tempo_bpm, valence, and rms_energy",
+            }));
+            return;
           }
 
           // Radio perception payloads commonly nest now-playing under
@@ -2165,20 +2183,33 @@ setInterval(refresh, 10000);
     // Check radio
     const radioPort = process.env.RADIO_PORT || 8888;
     const radioCheck = new Promise((resolve) => {
+      // Track the upstream status code so non-2xx doesn't appear "running".
+      // Pre-fix any HTTP body that parsed as JSON (including 500 error envelopes)
+      // was treated as healthy. (#13)
       const r = http.get(`http://localhost:${radioPort}/api/state`, { timeout: 2000 }, (res) => {
         let d = "";
         res.on("data", c => d += c);
-        res.on("end", () => { try { resolve(JSON.parse(d)); } catch { resolve(null); } });
+        res.on("end", () => {
+          if (res.statusCode < 200 || res.statusCode >= 300) return resolve(null);
+          try { resolve(JSON.parse(d)); } catch { resolve(null); }
+        });
       });
       r.on("error", () => resolve(null));
       r.on("timeout", () => { r.destroy(); resolve(null); });
     });
 
     radioCheck.then((radioState) => {
+      // Prefer `current.title` (canonical now-playing) over a
+      // playlist[currentTrackIdx] lookup which is null when /api/state
+      // omits the playlist array. (#12)
+      const currentTrack =
+        radioState?.current?.title ||
+        radioState?.playlist?.[radioState?.currentTrackIdx]?.title ||
+        null;
       checks.radio = radioState ? {
         running: true,
         currentAlbum: radioState.currentAlbum,
-        track: radioState.playlist?.[radioState.currentTrackIdx]?.title,
+        track: currentTrack,
       } : { running: false };
 
       res.writeHead(200, { "Content-Type": "application/json" });
