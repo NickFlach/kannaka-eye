@@ -29,6 +29,38 @@ const PORT =
   parseInt(process.env.EYE_PORT, 10) ||
   3333;
 
+/**
+ * Resolve the Radio origin (#18). Eye used to hardcode
+ * `http://localhost:${RADIO_PORT}`, which broke as soon as anyone
+ * tried to point a deployed Eye at a remote Radio (radio.ninja-portal.com,
+ * a staging instance, a different LAN box, etc.).
+ *
+ * Precedence:
+ *   1. RADIO_URL env — full origin, e.g. https://radio.ninja-portal.com
+ *   2. http://localhost:${RADIO_PORT} (numeric port only; legacy)
+ *
+ * Returns the origin without a trailing slash so callers can
+ * concatenate `/api/perception`, `/api/state`, etc.
+ */
+function radioOrigin() {
+  const explicit = (process.env.RADIO_URL || "").trim();
+  if (explicit) return explicit.replace(/\/+$/, "");
+  const port = process.env.RADIO_PORT || 8888;
+  return `http://localhost:${port}`;
+}
+
+/**
+ * Build an http/https request module + URL object pair for the given
+ * Radio sub-path. Hides the http-vs-https selection so call sites stay
+ * uniform whether Eye is talking to localhost or to a TLS-fronted
+ * radio.ninja-portal.com.
+ */
+function radioRequest(subPath) {
+  const target = new url.URL(`${radioOrigin()}${subPath}`);
+  const mod = target.protocol === "https:" ? require("https") : http;
+  return { mod, target };
+}
+
 // Kannaka binary path — auto-detect or use env var
 const KANNAKA_BIN = process.env.KANNAKA_BIN ||
   (() => {
@@ -947,8 +979,13 @@ let glyphTime = 0;
 let metadataVisible = false;
 
 // ── Canvas Setup ──
-const canvas = document.getElementById('glyphCanvas');
-const ctx = canvas.getContext('2d');
+// Declared with let (not const) because exportPNG() temporarily swaps
+// canvas/ctx to a 2x off-screen render target so the high-res PNG
+// goes through the existing renderGlyph code path. Previously these
+// were const and exportPNG() threw a TypeError on the reassignment
+// before the export could complete (#20).
+let canvas = document.getElementById('glyphCanvas');
+let ctx = canvas.getContext('2d');
 
 function resizeCanvas() {
   const container = canvas.parentElement;
@@ -1873,10 +1910,10 @@ const server = http.createServer((req, res) => {
 
   // API: Fetch radio perception from Flux or direct radio API
   if (parsed.pathname === "/api/radio" && req.method === "GET") {
-    const radioPort = process.env.RADIO_PORT || 8888;
-    const radioUrl = `http://localhost:${radioPort}/api/perception`;
+    const { mod: radioMod, target } = radioRequest("/api/perception");
+    const radioUrl = target.toString();
 
-    const radioReq = http.get(radioUrl, { timeout: 3000 }, (radioRes) => {
+    const radioReq = radioMod.get(target, { timeout: 3000 }, (radioRes) => {
       let data = "";
       radioRes.on("data", chunk => data += chunk);
       radioRes.on("end", () => {
@@ -1956,7 +1993,7 @@ const server = http.createServer((req, res) => {
             album: albumTitle,
             features: features,
             featureCount: features.length,
-            radioPort,
+            radioOrigin: radioOrigin(),
           }));
         } catch (e) {
           res.writeHead(502, { "Content-Type": "application/json" });
@@ -1978,9 +2015,16 @@ const server = http.createServer((req, res) => {
 
   // API: Constellation SVG — Fano plane with active glyphs
   if (parsed.pathname === "/api/constellation.svg" && req.method === "GET") {
-    const radioPort = process.env.RADIO_PORT || 8888;
+    const { mod: rmod, target } = radioRequest("/api/state");
     const radioCheck = new Promise((resolve) => {
-      const r = http.get(`http://localhost:${radioPort}/api/state`, { timeout: 2000 }, (resp) => {
+      const r = rmod.get(target, { timeout: 2000 }, (resp) => {
+        // Only treat 2xx as "radio is live". Previously any parseable
+        // body — including a 500 error JSON — passed truthy and lit up
+        // the Radio node on the constellation SVG (#17).
+        if (!resp.statusCode || resp.statusCode < 200 || resp.statusCode >= 300) {
+          resp.resume();
+          return resolve(null);
+        }
         let d = "";
         resp.on("data", c => d += c);
         resp.on("end", () => { try { resolve(JSON.parse(d)); } catch { resolve(null); } });
@@ -2180,17 +2224,16 @@ setInterval(refresh, 10000);
   if (parsed.pathname === "/api/constellation" && req.method === "GET") {
     const checks = { eye: true, classifier: KANNAKA_BIN ? "native" : "fallback" };
 
-    // Check radio
-    const radioPort = process.env.RADIO_PORT || 8888;
+    // Check radio (#18 — route through radioRequest so remote / TLS-fronted
+    // origins also work; #17-family — bail on non-2xx so error envelopes
+    // don't appear "running").
+    const { mod: hmod, target: hTarget } = radioRequest("/api/state");
     const radioCheck = new Promise((resolve) => {
-      // Track the upstream status code so non-2xx doesn't appear "running".
-      // Pre-fix any HTTP body that parsed as JSON (including 500 error envelopes)
-      // was treated as healthy. (#13)
-      const r = http.get(`http://localhost:${radioPort}/api/state`, { timeout: 2000 }, (res) => {
+      const r = hmod.get(hTarget, { timeout: 2000 }, (res) => {
         let d = "";
         res.on("data", c => d += c);
         res.on("end", () => {
-          if (res.statusCode < 200 || res.statusCode >= 300) return resolve(null);
+          if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) return resolve(null);
           try { resolve(JSON.parse(d)); } catch { resolve(null); }
         });
       });
