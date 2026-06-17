@@ -1,0 +1,18 @@
+# /etc/systemd/system/kannaka-eye.service
+# The constellation's vision modality. Emits SGA glyphs to KANNAKA.attention.eye
+# (the gravity source for kannaka-attention's beam).
+# Install: copy to /etc/systemd/system/, daemon-reload, enable --now.
+[Unit]
+Description=Kannaka Eye — SGA glyph perception + attention.eye emitter
+After=network.target
+
+[Service]
+Type=simple
+User=opc
+WorkingDirectory=/home/opc/kannaka-eye
+ExecStart=/home/opc/kannaka-eye/ops/run-eye.sh
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

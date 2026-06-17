@@ -22,6 +22,11 @@ const net = require("net");
 
 const NATS_URL = process.env.NATS_URL || "nats://localhost:4222";
 const NATS_TOKEN = process.env.NATS_TOKEN || null;
+// Oracle NATS uses user/password authz (the kannaka_internal account). The
+// KANNAKA.attention.eye subject is not in anon's publish allow-list, so the
+// eye must authenticate to emit glyphs.
+const NATS_USER = process.env.NATS_USER || null;
+const NATS_PASSWORD = process.env.NATS_PASSWORD || null;
 const HEMISPHERE = (process.env.KANNAKA_EYE_HEMISPHERE || "left").toLowerCase();
 const SUBJECT = "KANNAKA.attention.eye";
 const SOURCE_NAME = `kannaka-eye:${HEMISPHERE}`;
@@ -63,6 +68,7 @@ class AttentionBridge {
           // Send CONNECT — minimal, no subscriptions needed (publish-only).
           const connect = { verbose: false, pedantic: false, lang: "node-raw", name: SOURCE_NAME, protocol: 1 };
           if (authToken) connect.auth_token = authToken;
+          if (NATS_USER) { connect.user = NATS_USER; connect.pass = NATS_PASSWORD || ""; }
           sock.write(`CONNECT ${JSON.stringify(connect)}\r\n`);
           // Send PING to test the connection.
           sock.write("PING\r\n");
