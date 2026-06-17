@@ -97,6 +97,73 @@ attentionBridge.connect();
 console.log(`[eye] Attention bridge: hemisphere=${EYE_HEMISPHERE} subject=${EYE_ATTN_SUBJECT}`);
 
 /**
+ * Build an SGA glyph response object from a byte array (native classifier
+ * first, JS fallback) — the same shape /api/process emits. Used by /api/radio
+ * so radio listening PUBLISHES a real audio-feature glyph to the attention
+ * beam, not just raw feature bytes. Native-first keeps the dominant class
+ * aligned with how kannaka-memory classifies a memory (gravity alignment).
+ * Returns null on empty input.
+ */
+async function buildGlyphFromBytes(bytes, sourceType) {
+  if (!bytes || bytes.length === 0) return null;
+  const clamped = bytes.map((b) => Math.max(0, Math.min(255, b | 0)));
+  const nativeResult = await classifyNative(Buffer.from(clamped));
+  if (nativeResult) {
+    const levelDistribution = new Array(8).fill(0);
+    for (const cls of nativeResult.fold_sequence) levelDistribution[cls % 8] += 1;
+    const total = nativeResult.fold_sequence.length || 1;
+    for (let i = 0; i < levelDistribution.length; i++) levelDistribution[i] /= total;
+    return {
+      foldSequence: nativeResult.fold_sequence,
+      amplitudes: nativeResult.amplitudes,
+      phases: nativeResult.phases,
+      fanoSignature: nativeResult.fano_signature,
+      frequencies: nativeResult.frequencies,
+      centroid: nativeResult.centroid,
+      classesUsed: nativeResult.classes_used,
+      totalEnergy: nativeResult.amplitudes.reduce((s, a) => s + a, 0) / (nativeResult.amplitudes.length || 1),
+      compressionRatio: nativeResult.compression_ratio,
+      dominantClass: nativeResult.dominant_class,
+      levelDistribution,
+      processedAt: new Date().toISOString(),
+      classifier: "native",
+      sourceType: sourceType || nativeResult.source_type || "bytes",
+    };
+  }
+  // JS fallback — mirrors the bytes path in /api/process.
+  const classifiedData = clamped.map((byte, i) => ({
+    value: byte, position: i,
+    classIndex: classifyData([byte]),
+    components: decodeClassIndex(classifyData([byte])),
+  }));
+  const foldSequence = createFoldSequence(classifiedData);
+  const fanoSignature = computeFanoSignature(foldSequence);
+  const frequencies = sequenceToFrequencies(foldSequence);
+  const count = classifiedData.length;
+  const centroid = {
+    h2: Math.round(classifiedData.reduce((s, it) => s + it.components.h2, 0) / count) % 4,
+    d: Math.round(classifiedData.reduce((s, it) => s + it.components.d, 0) / count) % 3,
+    l: Math.round(classifiedData.reduce((s, it) => s + it.components.l, 0) / count) % 8,
+  };
+  const classCounts = {};
+  for (const c of foldSequence.sequence) classCounts[c] = (classCounts[c] || 0) + 1;
+  const dominantClass = Object.keys(classCounts).reduce((a, b) => (classCounts[a] > classCounts[b] ? a : b));
+  return {
+    foldSequence: foldSequence.sequence,
+    amplitudes: foldSequence.amplitudes,
+    phases: foldSequence.phases,
+    fanoSignature, frequencies, centroid,
+    classesUsed: new Set(foldSequence.sequence).size,
+    totalEnergy: foldSequence.amplitudes.reduce((s, a) => s + a, 0) / foldSequence.amplitudes.length,
+    compressionRatio: classifiedData.length / foldSequence.sequence.length,
+    dominantClass: parseInt(dominantClass),
+    processedAt: new Date().toISOString(),
+    classifier: "fallback",
+    sourceType: sourceType || "bytes",
+  };
+}
+
+/**
  * Attempt native classification via the kannaka binary.
  * Returns a Promise that resolves to the parsed JSON or null on failure.
  */
@@ -1916,7 +1983,7 @@ const server = http.createServer((req, res) => {
     const radioReq = radioMod.get(target, { timeout: 3000 }, (radioRes) => {
       let data = "";
       radioRes.on("data", chunk => data += chunk);
-      radioRes.on("end", () => {
+      radioRes.on("end", async () => {
         try {
           // Pre-fix: a non-2xx radio response was parsed as JSON and the
           // error envelope (`{error: "radio_offline", ...}`) was passed
@@ -1986,6 +2053,17 @@ const server = http.createServer((req, res) => {
           const albumTitle =
             ti.album ||
             perception.album || "unknown";
+          // Build a real glyph from the radio's audio features and PUBLISH it
+          // to the attention beam (the eye "seeing" what Kannaka hears). Until
+          // now /api/radio only rendered/returned bytes; the loop relied on the
+          // feeder POSTing track text to /api/process. Now the richer
+          // audio-feature glyph flows directly. Best-effort: a publish failure
+          // never breaks the HTTP response.
+          const glyph = await buildGlyphFromBytes(features, "audio");
+          if (glyph) {
+            try { attentionBridge.publishGlyph(glyph, "audio"); }
+            catch (e) { console.warn(`[eye] radio attention publish failed: ${e.message}`); }
+          }
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({
             source: "kannaka-radio",
@@ -1993,6 +2071,7 @@ const server = http.createServer((req, res) => {
             album: albumTitle,
             features: features,
             featureCount: features.length,
+            glyph: glyph || null,
             radioOrigin: radioOrigin(),
           }));
         } catch (e) {
