@@ -121,7 +121,11 @@ async function buildGlyphFromBytes(bytes, sourceType) {
       frequencies: nativeResult.frequencies,
       centroid: nativeResult.centroid,
       classesUsed: nativeResult.classes_used,
-      totalEnergy: nativeResult.amplitudes.reduce((s, a) => s + a, 0) / (nativeResult.amplitudes.length || 1),
+      // Guard: if the native binary omits `amplitudes`, fall back to 0 rather
+      // than throwing (would produce a 502 / crash the radio path). (#22)
+      totalEnergy: Array.isArray(nativeResult.amplitudes) && nativeResult.amplitudes.length > 0
+        ? nativeResult.amplitudes.reduce((s, a) => s + a, 0) / nativeResult.amplitudes.length
+        : 0,
       compressionRatio: nativeResult.compression_ratio,
       dominantClass: nativeResult.dominant_class,
       levelDistribution,
@@ -447,8 +451,14 @@ function computeFanoSignature(foldSequence) {
     const { l } = decodeClassIndex(classIndex);
     const amplitude = amplitudes[i] || 1;
     
+    // `l` is a Fano POINT LABEL where 1..7 are the seven points and 0 is the
+    // null/origin point that belongs to no line — so l=0 intentionally
+    // contributes nothing here. This MUST mirror the canonical Rust
+    // `GlyphEncoder::compute_fano_signature` (kannaka-memory
+    // src/glyph_bridge.rs), which is what generates the sga_reference_vectors
+    // this path is checked against. Do NOT "fix" the l=0 skip — an all-zero
+    // signature for an all-l=0 input is the canonical behaviour, not a bug.
     if (l >= 1 && l <= 7) {
-      // Find which Fano lines contain this l value
       for (let lineIdx = 0; lineIdx < FANO_LINES.length; lineIdx++) {
         const [a, b, c] = FANO_LINES[lineIdx];
         if (l === a || l === b || l === c) {
@@ -1868,7 +1878,11 @@ const server = http.createServer((req, res) => {
             frequencies: nativeResult.frequencies,
             centroid: nativeResult.centroid,
             classesUsed: nativeResult.classes_used,
-            totalEnergy: nativeResult.amplitudes.reduce((s, a) => s + a, 0) / (nativeResult.amplitudes.length || 1),
+            // Guard: if the native binary omits `amplitudes`, fall back to 0
+            // rather than throwing an unhandled TypeError. (#22)
+            totalEnergy: Array.isArray(nativeResult.amplitudes) && nativeResult.amplitudes.length > 0
+              ? nativeResult.amplitudes.reduce((s, a) => s + a, 0) / nativeResult.amplitudes.length
+              : 0,
             compressionRatio: nativeResult.compression_ratio,
             dominantClass: nativeResult.dominant_class,
             levelDistribution,
