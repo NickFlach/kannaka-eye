@@ -29,8 +29,9 @@ jobs:
             | xargs -0 -n1 node --check
 
       - name: SGA consistency check
-        run: node tests/sga_consistency.mjs || true
-        # tests/sga_consistency.mjs reports kannaka-eye#1 (SGA drift),
-        # which is a known-broken upstream — don't fail CI on the
-        # pre-existing classifier mismatch. Once #1 is closed, remove
-        # the `|| true`.
+        run: node tests/sga_consistency.mjs
+        # Golden self-consistency test of the eye's JS SGA decode. It spawns
+        # the server (native classifier forced off) and asserts /api/process
+        # matches the in-repo golden vectors — see the header in
+        # tests/sga_consistency.mjs for the exact contract. This genuinely
+        # gates: JS classifier drift or a parse/runtime regression fails CI.

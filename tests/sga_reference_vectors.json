@@ -1,0 +1,657 @@
+[
+  {
+    "id": "text-001",
+    "input_type": "text",
+    "description": "simple greeting",
+    "input": "hello world",
+    "expected": {
+      "dominant_class": 27,
+      "centroid": {
+        "h2": 1,
+        "d": 0,
+        "l": 4
+      },
+      "fano_signature": [
+        0.1359020310633214,
+        0.10902031063321388,
+        0.2574671445639188,
+        0.1245519713261649,
+        0.16427718040621272,
+        0.1756272401433692,
+        0.03315412186379929
+      ],
+      "classes_used": 6
+    }
+  },
+  {
+    "id": "text-002",
+    "input_type": "text",
+    "description": "single character",
+    "input": "a",
+    "expected": {
+      "dominant_class": 27,
+      "centroid": {
+        "h2": 1,
+        "d": 0,
+        "l": 6
+      },
+      "fano_signature": [
+        0,
+        0,
+        0.3333333333333333,
+        0,
+        0.3333333333333333,
+        0.3333333333333333,
+        0
+      ],
+      "classes_used": 1
+    }
+  },
+  {
+    "id": "text-003",
+    "input_type": "text",
+    "description": "pangram",
+    "input": "The quick brown fox jumps over the lazy dog",
+    "expected": {
+      "dominant_class": 21,
+      "centroid": {
+        "h2": 1,
+        "d": 0,
+        "l": 3
+      },
+      "fano_signature": [
+        0.14472988688021987,
+        0.196426683581774,
+        0.17549423829157412,
+        0.11734855692990802,
+        0.15001585791309865,
+        0.08161539274764772,
+        0.13436938365577755
+      ],
+      "classes_used": 12
+    }
+  },
+  {
+    "id": "text-004",
+    "input_type": "text",
+    "description": "digit string",
+    "input": "0123456789",
+    "expected": {
+      "dominant_class": 6,
+      "centroid": {
+        "h2": 0,
+        "d": 0,
+        "l": 3
+      },
+      "fano_signature": [
+        0.17026378896882494,
+        0.16866506794564348,
+        0.16546762589928057,
+        0.08393285371702637,
+        0.16227018385291764,
+        0.17026378896882494,
+        0.07913669064748201
+      ],
+      "classes_used": 7
+    }
+  },
+  {
+    "id": "text-005",
+    "input_type": "text",
+    "description": "repeated uppercase",
+    "input": "AAAA",
+    "expected": {
+      "dominant_class": 26,
+      "centroid": {
+        "h2": 1,
+        "d": 0,
+        "l": 4
+      },
+      "fano_signature": [
+        0.16666666666666666,
+        0.25,
+        0.16666666666666666,
+        0.16666666666666666,
+        0.08333333333333333,
+        0.08333333333333333,
+        0.08333333333333333
+      ],
+      "classes_used": 4
+    }
+  },
+  {
+    "id": "text-006",
+    "input_type": "text",
+    "description": "mixed case phrase",
+    "input": "SGA reference test",
+    "expected": {
+      "dominant_class": 24,
+      "centroid": {
+        "h2": 1,
+        "d": 0,
+        "l": 3
+      },
+      "fano_signature": [
+        0.13580246913580246,
+        0.20218961099464244,
+        0.2322385278360121,
+        0.08874912648497553,
+        0.09643605870020965,
+        0.09643605870020965,
+        0.14814814814814814
+      ],
+      "classes_used": 9
+    }
+  },
+  {
+    "id": "text-007",
+    "input_type": "text",
+    "description": "whitespace characters",
+    "input": "\t\n\r ",
+    "expected": {
+      "dominant_class": 4,
+      "centroid": {
+        "h2": 0,
+        "d": 0,
+        "l": 2
+      },
+      "fano_signature": [
+        0.33333333333333337,
+        0.09375000000000001,
+        0.10416666666666669,
+        0.10416666666666669,
+        0.13541666666666669,
+        0.09375000000000001,
+        0.13541666666666669
+      ],
+      "classes_used": 4
+    }
+  },
+  {
+    "id": "text-008",
+    "input_type": "text",
+    "description": "50 repeated z",
+    "input": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+    "expected": {
+      "dominant_class": 25,
+      "centroid": {
+        "h2": 1,
+        "d": 0,
+        "l": 3
+      },
+      "fano_signature": [
+        0.14393939393939392,
+        0.1893939393939394,
+        0.19696969696969696,
+        0.09848484848484848,
+        0.13636363636363635,
+        0.09090909090909091,
+        0.14393939393939392
+      ],
+      "classes_used": 8
+    }
+  },
+  {
+    "id": "text-009",
+    "input_type": "text",
+    "description": "mixed alphanumeric and symbols",
+    "input": "abc123!@#$%^&*()",
+    "expected": {
+      "dominant_class": 4,
+      "centroid": {
+        "h2": 0,
+        "d": 0,
+        "l": 3
+      },
+      "fano_signature": [
+        0.13162393162393166,
+        0.11794871794871797,
+        0.20940170940170943,
+        0.08632478632478632,
+        0.20769230769230773,
+        0.11452991452991454,
+        0.1324786324786325
+      ],
+      "classes_used": 9
+    }
+  },
+  {
+    "id": "text-010",
+    "input_type": "text",
+    "description": "256 repeated A",
+    "input": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "expected": {
+      "dominant_class": 23,
+      "centroid": {
+        "h2": 1,
+        "d": 0,
+        "l": 3
+      },
+      "fano_signature": [
+        0.19047619047619044,
+        0.19047619047619044,
+        0.14285714285714282,
+        0.09523809523809527,
+        0.14285714285714282,
+        0.14285714285714282,
+        0.09523809523809527
+      ],
+      "classes_used": 7
+    }
+  },
+  {
+    "id": "bytes-001",
+    "input_type": "bytes",
+    "description": "single null byte — low h2, low d",
+    "input_bytes": [
+      0
+    ],
+    "expected": {
+      "dominant_class": 0,
+      "centroid": {
+        "h2": 0,
+        "d": 0,
+        "l": 0
+      },
+      "fano_signature": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "classes_used": 1
+    }
+  },
+  {
+    "id": "bytes-002",
+    "input_type": "bytes",
+    "description": "high bytes — high h2",
+    "input_bytes": [
+      255,
+      254,
+      253,
+      252
+    ],
+    "expected": {
+      "dominant_class": 66,
+      "centroid": {
+        "h2": 3,
+        "d": 0,
+        "l": 2
+      },
+      "fano_signature": [
+        0.2222222222222222,
+        0.2222222222222222,
+        0.1111111111111111,
+        0,
+        0.1111111111111111,
+        0.1111111111111111,
+        0.2222222222222222
+      ],
+      "classes_used": 4
+    }
+  },
+  {
+    "id": "bytes-003",
+    "input_type": "bytes",
+    "description": "one byte per band — balanced h2",
+    "input_bytes": [
+      0,
+      64,
+      128,
+      192
+    ],
+    "expected": {
+      "dominant_class": 66,
+      "centroid": {
+        "h2": 2,
+        "d": 0,
+        "l": 2
+      },
+      "fano_signature": [
+        0.2222222222222222,
+        0.2222222222222222,
+        0.1111111111111111,
+        0,
+        0.1111111111111111,
+        0.1111111111111111,
+        0.2222222222222222
+      ],
+      "classes_used": 4
+    }
+  },
+  {
+    "id": "bytes-004",
+    "input_type": "bytes",
+    "description": "ramp 0..248 — spread across bands",
+    "input_bytes": [
+      0,
+      8,
+      16,
+      24,
+      32,
+      40,
+      48,
+      56,
+      64,
+      72,
+      80,
+      88,
+      96,
+      104,
+      112,
+      120,
+      128,
+      136,
+      144,
+      152,
+      160,
+      168,
+      176,
+      184,
+      192,
+      200,
+      208,
+      216,
+      224,
+      232,
+      240,
+      248
+    ],
+    "expected": {
+      "dominant_class": 66,
+      "centroid": {
+        "h2": 2,
+        "d": 0,
+        "l": 3
+      },
+      "fano_signature": [
+        0.1728395061728395,
+        0.1728395061728395,
+        0.16049382716049382,
+        0.09876543209876543,
+        0.16049382716049382,
+        0.1111111111111111,
+        0.12345679012345678
+      ],
+      "classes_used": 28
+    }
+  },
+  {
+    "id": "bytes-005",
+    "input_type": "bytes",
+    "description": "alternating 0x55/0xAA — mid entropy",
+    "input_bytes": [
+      85,
+      170,
+      85,
+      170,
+      85,
+      170,
+      85,
+      170
+    ],
+    "expected": {
+      "dominant_class": 44,
+      "centroid": {
+        "h2": 2,
+        "d": 0,
+        "l": 2
+      },
+      "fano_signature": [
+        0.3333333333333333,
+        0.16666666666666666,
+        0,
+        0,
+        0.16666666666666666,
+        0.16666666666666666,
+        0.16666666666666666
+      ],
+      "classes_used": 2
+    }
+  },
+  {
+    "id": "file-001",
+    "input_type": "file_pattern",
+    "description": "PNG header (first 16 bytes)",
+    "input_bytes": [
+      137,
+      80,
+      78,
+      71,
+      13,
+      10,
+      26,
+      10,
+      0,
+      0,
+      0,
+      13,
+      73,
+      72,
+      68,
+      82
+    ],
+    "expected": {
+      "dominant_class": 0,
+      "centroid": {
+        "h2": 1,
+        "d": 0,
+        "l": 3
+      },
+      "fano_signature": [
+        0.10256410256410256,
+        0.20512820512820512,
+        0.1794871794871795,
+        0.10256410256410256,
+        0.1794871794871795,
+        0.07692307692307693,
+        0.15384615384615385
+      ],
+      "classes_used": 9
+    }
+  },
+  {
+    "id": "file-002",
+    "input_type": "file_pattern",
+    "description": "JPEG/JFIF header",
+    "input_bytes": [
+      255,
+      216,
+      255,
+      224,
+      0,
+      16,
+      74,
+      70,
+      73,
+      70,
+      0,
+      1
+    ],
+    "expected": {
+      "dominant_class": 66,
+      "centroid": {
+        "h2": 1,
+        "d": 0,
+        "l": 2
+      },
+      "fano_signature": [
+        0.14285714285714285,
+        0.19047619047619047,
+        0.23809523809523808,
+        0.047619047619047616,
+        0.09523809523809523,
+        0.09523809523809523,
+        0.19047619047619047
+      ],
+      "classes_used": 9
+    }
+  },
+  {
+    "id": "file-003",
+    "input_type": "file_pattern",
+    "description": "WAV RIFF header",
+    "input_bytes": [
+      82,
+      73,
+      70,
+      70,
+      36,
+      8,
+      0,
+      0,
+      87,
+      65,
+      86,
+      69,
+      102,
+      109,
+      116,
+      32
+    ],
+    "expected": {
+      "dominant_class": 25,
+      "centroid": {
+        "h2": 1,
+        "d": 0,
+        "l": 2
+      },
+      "fano_signature": [
+        0.2222222222222222,
+        0.1388888888888889,
+        0.19444444444444445,
+        0.1388888888888889,
+        0.1111111111111111,
+        0.08333333333333333,
+        0.1111111111111111
+      ],
+      "classes_used": 9
+    }
+  },
+  {
+    "id": "file-004",
+    "input_type": "file_pattern",
+    "description": "PDF header (%PDF-1.4)",
+    "input_bytes": [
+      37,
+      80,
+      68,
+      70,
+      45,
+      49,
+      46,
+      52
+    ],
+    "expected": {
+      "dominant_class": 3,
+      "centroid": {
+        "h2": 0,
+        "d": 0,
+        "l": 3
+      },
+      "fano_signature": [
+        0.1111111111111111,
+        0.2777777777777778,
+        0.2222222222222222,
+        0.1111111111111111,
+        0.05555555555555555,
+        0.05555555555555555,
+        0.16666666666666666
+      ],
+      "classes_used": 7
+    }
+  },
+  {
+    "id": "file-005",
+    "input_type": "file_pattern",
+    "description": "synthetic sine-wave audio pattern",
+    "input_bytes": [
+      128,
+      165,
+      199,
+      227,
+      246,
+      254,
+      251,
+      237,
+      213,
+      182,
+      145,
+      107,
+      71,
+      40,
+      17,
+      3,
+      1,
+      10,
+      29,
+      58,
+      92,
+      130,
+      167,
+      201,
+      228,
+      247,
+      254,
+      251,
+      236,
+      212,
+      180,
+      143,
+      105,
+      69,
+      39,
+      16,
+      3,
+      1,
+      11,
+      31,
+      59,
+      94,
+      132,
+      169,
+      203,
+      230,
+      247,
+      254,
+      250,
+      235,
+      210,
+      178,
+      141,
+      103,
+      68,
+      37,
+      15,
+      3,
+      1,
+      12,
+      32,
+      61,
+      96,
+      134
+    ],
+    "expected": {
+      "dominant_class": 3,
+      "centroid": {
+        "h2": 2,
+        "d": 0,
+        "l": 3
+      },
+      "fano_signature": [
+        0.16111111111111112,
+        0.19444444444444445,
+        0.15,
+        0.1,
+        0.16111111111111112,
+        0.1,
+        0.13333333333333333
+      ],
+      "classes_used": 25
+    }
+  }
+]
