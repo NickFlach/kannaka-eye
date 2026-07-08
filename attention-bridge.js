@@ -32,13 +32,26 @@ const SUBJECT = "KANNAKA.attention.eye";
 const SOURCE_NAME = `kannaka-eye:${HEMISPHERE}`;
 
 function parseNatsUrl(u) {
-  // nats://[token@]host[:port]
+  // nats://[user:pass@ | token@]host[:port]
+  // A credential containing ':' is username/password (NATS authz — the
+  // kannaka_internal account uses this); a bare credential is a token.
+  // Pre-fix the whole credential was returned as `token`, so a standard
+  // `nats://user:pass@host` URL was sent as auth_token and never authed. (#22)
   const m = u.match(/^nats:\/\/(?:([^@]+)@)?([^:/]+)(?::(\d+))?/i);
-  if (!m) return { host: "localhost", port: 4222, token: null };
+  if (!m) return { host: "localhost", port: 4222, user: null, pass: null, token: null };
+  const cred = m[1] || null;
+  let user = null, pass = null, token = null;
+  if (cred != null) {
+    const ci = cred.indexOf(":");
+    if (ci >= 0) { user = cred.slice(0, ci); pass = cred.slice(ci + 1); }
+    else { token = cred; }
+  }
   return {
     host: m[2] || "localhost",
     port: m[3] ? parseInt(m[3], 10) : 4222,
-    token: m[1] || null,
+    user,
+    pass,
+    token,
   };
 }
 
@@ -53,8 +66,18 @@ class AttentionBridge {
   }
 
   connect() {
-    const { host, port, token } = parseNatsUrl(NATS_URL);
-    const authToken = NATS_TOKEN || token;
+    const parsed = parseNatsUrl(NATS_URL);
+    const { host, port } = parsed;
+    // Auth precedence (#22): explicit env vars win, then credentials embedded
+    // in NATS_URL. user/pass (if present) takes precedence over a token so a
+    // `nats://user:pass@host` URL authenticates instead of being sent as a
+    // bare token.
+    let user = null, pass = null, authToken = null;
+    if (NATS_USER) { user = NATS_USER; pass = NATS_PASSWORD || ""; }
+    else if (parsed.user) { user = parsed.user; pass = parsed.pass || ""; }
+    if (NATS_TOKEN) authToken = NATS_TOKEN;
+    else if (!user && parsed.token) authToken = parsed.token;
+    const authMode = user ? "user" : authToken ? "token" : "none";
     const sock = net.createConnection({ host, port }, () => {
       // Wait for INFO before sending CONNECT (per NATS protocol).
     });
@@ -67,15 +90,17 @@ class AttentionBridge {
         if (line.startsWith("INFO ")) {
           // Send CONNECT — minimal, no subscriptions needed (publish-only).
           const connect = { verbose: false, pedantic: false, lang: "node-raw", name: SOURCE_NAME, protocol: 1 };
-          if (authToken) connect.auth_token = authToken;
-          if (NATS_USER) { connect.user = NATS_USER; connect.pass = NATS_PASSWORD || ""; }
+          // user/pass and token are mutually exclusive auth modes; prefer
+          // user/pass when we have it.
+          if (user) { connect.user = user; connect.pass = pass; }
+          else if (authToken) connect.auth_token = authToken;
           sock.write(`CONNECT ${JSON.stringify(connect)}\r\n`);
           // Send PING to test the connection.
           sock.write("PING\r\n");
         } else if (line === "PONG") {
           if (!this._connected) {
             this._connected = true;
-            console.log(`[attention-bridge] connected to ${host}:${port} (hemisphere=${HEMISPHERE})`);
+            console.log(`[attention-bridge] connected to ${host}:${port} (hemisphere=${HEMISPHERE}, auth=${authMode})`);
           }
         } else if (line === "PING") {
           sock.write("PONG\r\n");
@@ -160,4 +185,4 @@ class AttentionBridge {
   }
 }
 
-module.exports = { AttentionBridge, HEMISPHERE, SUBJECT };
+module.exports = { AttentionBridge, HEMISPHERE, SUBJECT, parseNatsUrl };

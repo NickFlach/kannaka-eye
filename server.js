@@ -195,6 +195,34 @@ function classifyNative(inputBuffer) {
 }
 
 /**
+ * Probe whether the native classifier is actually usable (#21).
+ *
+ * KANNAKA_BIN existing on disk does NOT mean Eye can classify natively: the
+ * current kannaka CLI has no `classify` subcommand, so classifyNative() fails
+ * on every request and silently falls back to the JS classifier. Reporting
+ * "native" from mere file presence made /api/constellation and the SVG lie
+ * about whether memory-native classification is wired up.
+ *
+ * Probe once with a tiny sample, memoize the result, and only let callers
+ * claim "native" when the binary genuinely returns a classified glyph. If a
+ * future kannaka ships a real classify subcommand this begins reporting native
+ * truthfully with no further changes. Resolved once at first use, like
+ * KANNAKA_BIN itself — a rebuild mid-run needs a restart to be picked up.
+ */
+let _nativeProbe = null; // memoized Promise<boolean>
+function nativeClassifierAvailable() {
+  if (_nativeProbe) return _nativeProbe;
+  if (!KANNAKA_BIN) {
+    _nativeProbe = Promise.resolve(false);
+    return _nativeProbe;
+  }
+  _nativeProbe = classifyNative(Buffer.from([0, 128, 255]))
+    .then((r) => !!(r && Array.isArray(r.fold_sequence) && r.fold_sequence.length > 0))
+    .catch(() => false);
+  return _nativeProbe;
+}
+
+/**
  * Publish a GlyphPublished event to Flux (ADR-0015 schema).
  * Fire-and-forget with throttle (max 1/sec).
  */
@@ -1690,13 +1718,17 @@ function handleFile(file) {
     let chunksRead = 0;
     let chunkIndex = 0;
     
-    document.getElementById('info-text').textContent = 
+    // Progress goes to the existing #canvasInfo status line. The page never
+    // rendered an #info-text element, so the previous getElementById('info-text')
+    // dereferenced null and threw before sampling could start on any >1 MB
+    // upload. (#26)
+    document.getElementById('canvasInfo').textContent =
       'Reading ' + (file.size / (1024*1024)).toFixed(1) + ' MB...';
-    
+
     function readNextChunk() {
       if (chunkIndex >= totalChunks || samples.length >= MAX_SAMPLES) {
-        document.getElementById('info-text').textContent = 
-          'Sampled ' + samples.length.toLocaleString() + ' points from ' + 
+        document.getElementById('canvasInfo').textContent =
+          'Sampled ' + samples.length.toLocaleString() + ' points from ' +
           (file.size / (1024*1024)).toFixed(1) + ' MB';
         processInput(samples, 'bytes');
         return;
@@ -2126,7 +2158,7 @@ const server = http.createServer((req, res) => {
       r.on("timeout", () => { r.destroy(); resolve(null); });
     });
 
-    radioCheck.then((radioState) => {
+    Promise.all([radioCheck, nativeClassifierAvailable()]).then(([radioState, nativeOk]) => {
       // Fano plane vertices (7 points) in a circle
       const cx = 200, cy = 200, radius = 150;
       const pts = [];
@@ -2148,11 +2180,15 @@ const server = http.createServer((req, res) => {
         dream: "#ec4899"
       };
 
-      // Build active glyph dots (eye is always active, radio if running)
+      // Build active glyph dots. Eye is always active; radio lights only when
+      // /api/state returns 2xx; memory lights only when the native classifier
+      // probe actually succeeds — previously Memory was hardcoded active with
+      // no check at all, so the SVG implied kannaka-memory was wired up even
+      // when Eye had verified nothing. (#24, #21)
       const dots = [];
       dots.push({ idx: 0, source: "eye", label: "Eye" });
       if (radioState) dots.push({ idx: 3, source: "radio", label: "Radio" });
-      dots.push({ idx: 6, source: "memory", label: "Memory" });
+      if (nativeOk) dots.push({ idx: 6, source: "memory", label: "Memory" });
 
       let svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
@@ -2189,7 +2225,8 @@ const server = http.createServer((req, res) => {
 
       // Status text
       svg += `  <text x="200" y="380" text-anchor="middle" fill="#555" font-family="monospace" font-size="10">`;
-      svg += `eye:ON radio:${radioState ? "ON" : "OFF"} memory:${KANNAKA_BIN ? "BIN" : "JS"}`;
+      const memoryStatus = nativeOk ? "NATIVE" : (KANNAKA_BIN ? "UNVERIFIED" : "OFF");
+      svg += `eye:ON radio:${radioState ? "ON" : "OFF"} memory:${memoryStatus}`;
       svg += `</text>\n`;
       svg += `</svg>`;
 
@@ -2295,7 +2332,7 @@ function refresh() {
         document.getElementById("dot-memory").className = "dot off";
         document.getElementById("card-memory").className = "card offline";
         document.getElementById("meta-memory").innerHTML =
-          "Status: <span>no binary</span><br>" +
+          "Status: <span>native unavailable</span><br>" +
           "Classifier: <span>JS fallback</span>";
       }
     })
@@ -2315,7 +2352,10 @@ setInterval(refresh, 10000);
 
   // API: Constellation status
   if (parsed.pathname === "/api/constellation" && req.method === "GET") {
-    const checks = { eye: true, classifier: KANNAKA_BIN ? "native" : "fallback" };
+    // classifier is reported from an actual native-classifier probe, not from
+    // KANNAKA_BIN file presence — otherwise Eye claimed "native" while every
+    // request silently used the JS fallback. (#21)
+    const checks = { eye: true };
 
     // Check radio (#18 — route through radioRequest so remote / TLS-fronted
     // origins also work; #17-family — bail on non-2xx so error envelopes
@@ -2334,7 +2374,8 @@ setInterval(refresh, 10000);
       r.on("timeout", () => { r.destroy(); resolve(null); });
     });
 
-    radioCheck.then((radioState) => {
+    Promise.all([radioCheck, nativeClassifierAvailable()]).then(([radioState, nativeOk]) => {
+      checks.classifier = nativeOk ? "native" : "fallback";
       // Prefer `current.title` (canonical now-playing) over a
       // playlist[currentTrackIdx] lookup which is null when /api/state
       // omits the playlist array. (#12)
