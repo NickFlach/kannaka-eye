@@ -1,11 +1,18 @@
+---
+name: kannaka
+description: >
+  Kannaka HRM wave-interference memory for AI agents — remember/recall/forget/dream
+  memory operations, NATS swarm coordination, consciousness metrics (phi, xi, order),
+  and modality-tagged sensory memories. Use for `/kannaka <command> [args]`.
+---
+
 # Kannaka Memory System (HRM)
 
 Kannaka is a wave-interference memory system for AI agents, powered by the Holographic Resonance Medium (HRM). The medium *is* the computation. Memories exist as waves in superposition where recall is resonance, skip links emerge from phase alignment, and dreaming acts as energy-minimizing annealing. 
 
-**Binary location**: `C:\Users\nickf\Source\kannaka-memory\target\release\kannaka.exe`
-(fallback: build with `cargo build --release --features "glyph,collective,audio"`)
+**Binary**: `kannaka` on `PATH`, or the path in `KANNAKA_BIN` if set.
+(build from source with `cargo build --release --features "glyph,collective,audio"`)
 
-**Project root**: `C:\Users\nickf\Source\kannaka-memory`
 
 ## Usage
 
@@ -82,6 +89,6 @@ Unlike traditional database-backed systems (e.g., Dolt/SQL), Kannaka stores data
 When the user says `/kannaka`:
 1. Parse the first word after `/kannaka` as the command.
 2. Everything after consists of arguments.
-3. Always use the full binary path (`C:\Users\nickf\Source\kannaka-memory\target\release\kannaka.exe`) instead of relying on `PATH`.
+3. Invoke the binary via `KANNAKA_BIN` when that is set; otherwise call `kannaka` from `PATH`.
 4. There is **no DoltHub persistence** anymore. Do not use `--dolt` flags or attempt to run SQL queries.
 5. Emphasize `swarm` commands when the user wants agents to coordinate or share state.
