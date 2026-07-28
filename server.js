@@ -2177,7 +2177,8 @@ const server = http.createServer((req, res) => {
         eye: "#00e5ff",
         radio: "#f59e0b",
         memory: "#a78bfa",
-        dream: "#ec4899"
+        dream: "#ec4899",
+        attention: "#4ade80"
       };
 
       // Build active glyph dots. Eye is always active; radio lights only when
@@ -2185,10 +2186,15 @@ const server = http.createServer((req, res) => {
       // probe actually succeeds — previously Memory was hardcoded active with
       // no check at all, so the SVG implied kannaka-memory was wired up even
       // when Eye had verified nothing. (#24, #21)
+      // Attention lights only while the NATS bridge is actually connected —
+      // same honesty rule as Radio and Memory above. A dark Attention node is
+      // the visible signal that glyphs are being dropped. (#46)
+      const attentionOk = attentionBridge.stats().connected;
       const dots = [];
       dots.push({ idx: 0, source: "eye", label: "Eye" });
       if (radioState) dots.push({ idx: 3, source: "radio", label: "Radio" });
       if (nativeOk) dots.push({ idx: 6, source: "memory", label: "Memory" });
+      if (attentionOk) dots.push({ idx: 5, source: "attention", label: "Attention" });
 
       let svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
@@ -2226,7 +2232,7 @@ const server = http.createServer((req, res) => {
       // Status text
       svg += `  <text x="200" y="380" text-anchor="middle" fill="#555" font-family="monospace" font-size="10">`;
       const memoryStatus = nativeOk ? "NATIVE" : (KANNAKA_BIN ? "UNVERIFIED" : "OFF");
-      svg += `eye:ON radio:${radioState ? "ON" : "OFF"} memory:${memoryStatus}`;
+      svg += `eye:ON radio:${radioState ? "ON" : "OFF"} memory:${memoryStatus} attention:${attentionOk ? "ON" : "OFF"}`;
       svg += `</text>\n`;
       svg += `</svg>`;
 
@@ -2288,6 +2294,10 @@ const server = http.createServer((req, res) => {
     <h2><span class="dot" id="dot-memory"></span> Memory</h2>
     <div class="meta" id="meta-memory">Checking...</div>
   </div>
+  <div class="card" id="card-attention">
+    <h2><span class="dot" id="dot-attention"></span> Attention</h2>
+    <div class="meta" id="meta-attention">Checking...</div>
+  </div>
 </div>
 
 <button class="refresh-btn" onclick="refresh()">Refresh</button>
@@ -2334,6 +2344,26 @@ function refresh() {
         document.getElementById("meta-memory").innerHTML =
           "Status: <span>native unavailable</span><br>" +
           "Classifier: <span>JS fallback</span>";
+      }
+
+      // Attention (Eye->NATS bridge). A dead bridge means every glyph is
+      // being dropped, which this dashboard used to render as fully healthy.
+      var att = data.attention || {};
+      if (att.connected) {
+        document.getElementById("dot-attention").className = "dot on";
+        document.getElementById("card-attention").className = "card online";
+        document.getElementById("meta-attention").innerHTML =
+          "Status: <span>connected</span><br>" +
+          "Hemisphere: <span>" + (att.hemisphere || "?") + "</span><br>" +
+          "Published: <span>" + (att.published || 0) + "</span>";
+      } else {
+        document.getElementById("dot-attention").className = "dot off";
+        document.getElementById("card-attention").className = "card offline";
+        document.getElementById("meta-attention").innerHTML =
+          "Status: <span>disconnected</span><br>" +
+          "Dropped: <span>" + (att.dropped || 0) + "</span><br>" +
+          (att.lastError ? "Error: <span>" + String(att.lastError).slice(0, 60) + "</span><br>" : "") +
+          "Retry: <span>" + (att.reconnectPending ? "scheduled" : "none") + "</span>";
       }
     })
     .catch(() => {
@@ -2388,6 +2418,20 @@ setInterval(refresh, 10000);
         currentAlbum: radioState.currentAlbum,
         track: currentTrack,
       } : { running: false };
+
+      // The Eye->Attention NATS link is part of the constellation, but this
+      // surface used to omit it entirely: a dead bridge left /api/constellation
+      // looking perfectly healthy while every glyph was being dropped. Report
+      // the live bridge state, including WHY it is down. (#46)
+      const a = attentionBridge.stats();
+      checks.attention = {
+        connected: a.connected,
+        hemisphere: a.hemisphere,
+        published: a.published,
+        dropped: a.dropped,
+        reconnectPending: a.reconnectPending,
+        lastError: a.lastError,
+      };
 
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(checks));
