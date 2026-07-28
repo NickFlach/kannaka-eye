@@ -17,6 +17,9 @@
  *   #22  attention-bridge parses nats://user:pass@host into user/pass, and a
  *        bare nats://token@host into a token (pre-fix: user:pass sent as one
  *        auth_token).
+ *   #46  /api/constellation and constellation.svg report attention-bridge
+ *        state (pre-fix: a dead Eye->Attention link left every surface
+ *        looking healthy while glyphs were silently dropped).
  *   #47  a fatal NATS -ERR drops the socket so the 5s reconnect fires
  *        (pre-fix: -ERR only logged, and _scheduleReconnect() is reachable
  *        only from 'close' — a broker that rejected auth without closing left
@@ -247,6 +250,36 @@ async function main() {
       check("#27 /api/radio emits the 0 tempo byte first",
         Array.isArray(body.features) && body.features[0] === 0,
         `features=${JSON.stringify(body.features)}`);
+    }
+
+    // ── #46: constellation surfaces must include the attention bridge ──
+    //
+    // The server under test has no NATS broker, so its bridge is down and
+    // every glyph is being dropped. Pre-fix all three surfaces still looked
+    // healthy, because none of them mentioned the bridge at all.
+    {
+      const res = await request(port, "/api/constellation");
+      const body = JSON.parse(res.body);
+      check("#46 /api/constellation includes attention state",
+        body.attention !== undefined, `keys=${Object.keys(body).join(",")}`);
+      check("#46 attention reports disconnected with no broker",
+        body.attention && body.attention.connected === false,
+        `attention=${JSON.stringify(body.attention)}`);
+      check("#46 attention exposes the dropped counter",
+        body.attention && typeof body.attention.dropped === "number",
+        `attention=${JSON.stringify(body.attention)}`);
+      check("#46 attention exposes retry state so a dead link is diagnosable",
+        body.attention && "reconnectPending" in body.attention && "lastError" in body.attention,
+        `attention=${JSON.stringify(body.attention)}`);
+
+      const svg = await request(port, "/api/constellation.svg");
+      check("#46 SVG status line reports attention",
+        /attention:(ON|OFF)/.test(svg.body), `status line missing attention`);
+      check("#46 SVG reports attention OFF when the bridge is down",
+        /attention:OFF/.test(svg.body), `expected attention:OFF`);
+      check("#46 SVG does not light an Attention node while disconnected",
+        !svg.body.includes(">Attention<"),
+        "a dark bridge must not render as an active constellation node");
     }
   } catch (e) {
     console.error(`Fatal: ${e.message}`);
