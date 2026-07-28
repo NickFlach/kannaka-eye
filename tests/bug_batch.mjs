@@ -20,6 +20,9 @@
  *   #35  the attention bridge honours the constellation-wide
  *        KANNAKA_NATS_URL (pre-fix: only the generic NATS_URL was read, so a
  *        correctly-configured box silently published to localhost:4222).
+ *   #37  a fallback-classified /api/radio glyph still carries
+ *        levelDistribution (pre-fix: buildGlyphFromBytes omitted it, so the
+ *        viewer's resonance-ring layer silently did not render).
  *   #38  the Radio preset renders the glyph /api/radio already returned
  *        instead of re-POSTing to /api/process (pre-fix: one radio click
  *        published the same listening event to attention twice, the second
@@ -267,6 +270,38 @@ async function main() {
       check("#26 page routes large-file progress to #canvasInfo",
         html.includes("getElementById('canvasInfo').textContent"),
         "no canvasInfo progress write found");
+
+      // #37: a fallback-classified radio glyph must still carry the
+      // resonance-ring layer. The test server has no usable native classifier,
+      // so /api/radio necessarily takes the fallback branch — exactly the path
+      // that used to return a glyph with no levelDistribution at all.
+      {
+        const r = await request(port, "/api/radio");
+        if (r.status === 200) {
+          const rb = JSON.parse(r.body);
+          // Read defensively: when this regresses, levelDistribution is
+          // ABSENT, and a test that throws on the missing field would abort
+          // the whole suite instead of reporting a clean failure.
+          const ld = rb.glyph && Array.isArray(rb.glyph.levelDistribution)
+            ? rb.glyph.levelDistribution
+            : null;
+          check("#37 fallback radio glyph carries levelDistribution",
+            ld !== null,
+            `glyph keys=${JSON.stringify(rb.glyph && Object.keys(rb.glyph))}`);
+          check("#37 levelDistribution has the 8 buckets the viewer renders",
+            ld !== null && ld.length === 8,
+            `len=${ld === null ? "absent" : ld.length}`);
+          check("#37 levelDistribution is normalised to sum ~1",
+            ld !== null && Math.abs(ld.reduce((s, v) => s + v, 0) - 1) < 1e-9,
+            `sum=${ld === null ? "absent" : ld.reduce((s, v) => s + v, 0)}`);
+          check("#37 the fallback branch is genuinely the one under test",
+            rb.glyph && rb.glyph.classifier === "fallback",
+            `classifier=${rb.glyph && rb.glyph.classifier}`);
+        } else {
+          check("#37 /api/radio reachable for levelDistribution check", false,
+            `status=${r.status} body=${r.body.slice(0, 120)}`);
+        }
+      }
 
       // #38: one radio click must produce ONE attention publish. /api/radio
       // already classifies and publishes as "audio"; re-POSTing to
