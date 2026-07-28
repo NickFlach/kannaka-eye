@@ -61,7 +61,15 @@ function radioRequest(subPath) {
   return { mod, target };
 }
 
-// Kannaka binary path — auto-detect or use env var
+// Kannaka binary path — explicit env var, else auto-detect.
+//
+// An explicitly-set KANNAKA_BIN deliberately wins even when the path does not
+// exist: silently substituting a different binary than the operator named is
+// worse than honouring the instruction and complaining about it. What was NOT
+// acceptable is doing that QUIETLY — the startup line below announced
+// "Native classifier: <path>" for a path that had never been checked, so a
+// typo'd env var read as a working native setup. (#48)
+const KANNAKA_BIN_EXPLICIT = !!process.env.KANNAKA_BIN;
 const KANNAKA_BIN = process.env.KANNAKA_BIN ||
   (() => {
     const candidates = [
@@ -75,7 +83,22 @@ const KANNAKA_BIN = process.env.KANNAKA_BIN ||
   })();
 
 if (KANNAKA_BIN) {
-  console.log(`[eye] Native classifier: ${KANNAKA_BIN}`);
+  const binExists = (() => { try { return fs.existsSync(KANNAKA_BIN); } catch { return false; } })();
+  if (binExists) {
+    console.log(`[eye] Native classifier: ${KANNAKA_BIN}`);
+  } else if (KANNAKA_BIN_EXPLICIT) {
+    console.warn(
+      `[eye] KANNAKA_BIN is set to "${KANNAKA_BIN}" but no file exists there — ` +
+      `every classification will use the JS fallback. Auto-detection is skipped ` +
+      `because KANNAKA_BIN was set explicitly; unset it to auto-detect instead.`,
+    );
+  } else {
+    // Auto-detected a path that has since disappeared (rebuild mid-run).
+    console.warn(
+      `[eye] auto-detected classifier "${KANNAKA_BIN}" is no longer present — ` +
+      `using the JS fallback. Restart to re-detect.`,
+    );
+  }
 } else {
   console.log(`[eye] Native classifier not found — using JS fallback`);
 }
