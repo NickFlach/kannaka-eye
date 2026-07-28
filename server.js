@@ -152,6 +152,15 @@ async function buildGlyphFromBytes(bytes, sourceType) {
   const classCounts = {};
   for (const c of foldSequence.sequence) classCounts[c] = (classCounts[c] || 0) + 1;
   const dominantClass = Object.keys(classCounts).reduce((a, b) => (classCounts[a] > classCounts[b] ? a : b));
+  // This branch omitted levelDistribution entirely, even though the helper is
+  // documented as returning "the same shape /api/process emits" — so a
+  // fallback-classified radio glyph reached the viewer with no resonance-ring
+  // layer at all (renderResonanceRings bails on `!glyph.levelDistribution`).
+  // Computed exactly as the /api/process fallback does: over classifiedData,
+  // bucketed by the SGA `l` component. (#37)
+  const levelDistribution = new Array(8).fill(0);
+  for (const item of classifiedData) levelDistribution[item.components.l] += 1;
+  for (let i = 0; i < levelDistribution.length; i++) levelDistribution[i] /= count;
   return {
     foldSequence: foldSequence.sequence,
     amplitudes: foldSequence.amplitudes,
@@ -161,6 +170,7 @@ async function buildGlyphFromBytes(bytes, sourceType) {
     totalEnergy: foldSequence.amplitudes.reduce((s, a) => s + a, 0) / foldSequence.amplitudes.length,
     compressionRatio: classifiedData.length / foldSequence.sequence.length,
     dominantClass: parseInt(dominantClass),
+    levelDistribution,
     processedAt: new Date().toISOString(),
     classifier: "fallback",
     sourceType: sourceType || "bytes",
