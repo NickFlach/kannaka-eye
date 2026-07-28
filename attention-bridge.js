@@ -20,7 +20,30 @@
 
 const net = require("net");
 
-const NATS_URL = process.env.NATS_URL || "nats://localhost:4222";
+const DEFAULT_NATS_URL = "nats://localhost:4222";
+
+/**
+ * Resolve the broker URL from the environment.
+ *
+ * KANNAKA_NATS_URL is the constellation-wide setting (kannaka-memory resolves
+ * it in ask.rs / identity.rs). The eye read only the generic NATS_URL, so on a
+ * box configured the constellation way it silently fell back to localhost:4222
+ * and published attention into a broker nobody was listening to. The specific
+ * name wins over the generic one — same rule as RADIO_PORT over PORT. (#35)
+ *
+ * Pure and exported so the precedence is testable without re-importing this
+ * module: it is CommonJS, so env read at load cannot be refreshed by an
+ * `import(...?bust=N)` — the CJS require cache ignores the query string.
+ *
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string}
+ */
+function resolveNatsUrl(env = process.env) {
+  const pick = (v) => (typeof v === "string" && v.trim() !== "" ? v.trim() : null);
+  return pick(env.KANNAKA_NATS_URL) || pick(env.NATS_URL) || DEFAULT_NATS_URL;
+}
+
+const NATS_URL = resolveNatsUrl();
 const NATS_TOKEN = process.env.NATS_TOKEN || null;
 // Oracle NATS uses user/password authz (the kannaka_internal account). The
 // KANNAKA.attention.eye subject is not in anon's publish allow-list, so the
@@ -242,4 +265,4 @@ class AttentionBridge {
   }
 }
 
-module.exports = { AttentionBridge, HEMISPHERE, SUBJECT, parseNatsUrl, isFatalNatsError };
+module.exports = { AttentionBridge, HEMISPHERE, SUBJECT, parseNatsUrl, isFatalNatsError, resolveNatsUrl, DEFAULT_NATS_URL };

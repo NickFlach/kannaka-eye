@@ -17,6 +17,9 @@
  *   #22  attention-bridge parses nats://user:pass@host into user/pass, and a
  *        bare nats://token@host into a token (pre-fix: user:pass sent as one
  *        auth_token).
+ *   #35  the attention bridge honours the constellation-wide
+ *        KANNAKA_NATS_URL (pre-fix: only the generic NATS_URL was read, so a
+ *        correctly-configured box silently published to localhost:4222).
  *   #38  the Radio preset renders the glyph /api/radio already returned
  *        instead of re-POSTing to /api/process (pre-fix: one radio click
  *        published the same listening event to attention twice, the second
@@ -42,7 +45,7 @@ import { fileURLToPath } from "url";
 import net from "net";
 import http from "http";
 
-import { AttentionBridge, parseNatsUrl, isFatalNatsError } from "../attention-bridge.js";
+import { AttentionBridge, parseNatsUrl, isFatalNatsError, resolveNatsUrl, DEFAULT_NATS_URL } from "../attention-bridge.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const EYE_DIR = join(__dirname, "..");
@@ -141,6 +144,27 @@ async function main() {
 
     const plain = parseNatsUrl("nats://localhost:4222");
     check("#22 plain URL → no creds", plain.user === null && plain.token === null, `got user=${plain.user} token=${plain.token}`);
+  }
+
+  // ── #35: KANNAKA_NATS_URL is the constellation-wide setting ──
+  //
+  // The bridge read only the generic NATS_URL, so a box configured the
+  // constellation way silently fell back to localhost:4222 and published
+  // attention into a broker nobody was listening to.
+  {
+    check("#35 KANNAKA_NATS_URL is honoured",
+      resolveNatsUrl({ KANNAKA_NATS_URL: "nats://broker:4222" }) === "nats://broker:4222");
+    check("#35 KANNAKA_NATS_URL outranks the generic NATS_URL",
+      resolveNatsUrl({ KANNAKA_NATS_URL: "nats://specific:4222", NATS_URL: "nats://generic:4222" }) === "nats://specific:4222",
+      "the constellation-specific name must win, same rule as RADIO_PORT over PORT");
+    check("#35 NATS_URL still works when KANNAKA_NATS_URL is unset",
+      resolveNatsUrl({ NATS_URL: "nats://legacy:4222" }) === "nats://legacy:4222",
+      "existing deployments must not break");
+    check("#35 falls back to localhost when neither is set",
+      resolveNatsUrl({}) === DEFAULT_NATS_URL);
+    check("#35 blank/whitespace values do not shadow the next source",
+      resolveNatsUrl({ KANNAKA_NATS_URL: "   ", NATS_URL: "nats://real:4222" }) === "nats://real:4222",
+      "an empty env var is not a configured broker");
   }
 
   // ── #47: a fatal -ERR must drop the socket so a reconnect is scheduled ──
