@@ -17,6 +17,10 @@
  *   #22  attention-bridge parses nats://user:pass@host into user/pass, and a
  *        bare nats://token@host into a token (pre-fix: user:pass sent as one
  *        auth_token).
+ *   #41  /api/constellation exposes a `memory` object instead of forcing
+ *        callers to infer memory status from the `classifier` string.
+ *   #43  the viewer renders dominantClass 0 as "0", not an em dash (pre-fix:
+ *        `|| '—'` treated a legitimate class 0 as "no data").
  *   #46  /api/constellation and constellation.svg report attention-bridge
  *        state (pre-fix: a dead Eye->Attention link left every surface
  *        looking healthy while glyphs were silently dropped).
@@ -235,6 +239,16 @@ async function main() {
       check("#26 page routes large-file progress to #canvasInfo",
         html.includes("getElementById('canvasInfo').textContent"),
         "no canvasInfo progress write found");
+
+      // #43: class 0 is a real SGA class. `|| '—'` rendered it as "no data".
+      // Asserted against served page source, same approach as #26 — there is
+      // no browser harness in this repo.
+      check("#43 dominantClass uses ?? so class 0 is not masked",
+        html.includes("glyph.dominantClass ?? '—'"),
+        "expected nullish coalescing for dominantClass");
+      check("#43 dominantClass no longer uses || for its placeholder",
+        !html.includes("glyph.dominantClass || '—'"),
+        "|| masks a legitimate class 0 as an em dash");
       check("#26 page has no active #info-text null-deref call",
         !html.includes("getElementById('info-text').textContent"),
         "page still writes to a nonexistent #info-text element");
@@ -271,6 +285,19 @@ async function main() {
       check("#46 attention exposes retry state so a dead link is diagnosable",
         body.attention && "reconnectPending" in body.attention && "lastError" in body.attention,
         `attention=${JSON.stringify(body.attention)}`);
+
+      // ── #41: memory gets its own object, not an inferred `classifier` ──
+      check("#41 /api/constellation includes a memory object",
+        body.memory !== undefined && typeof body.memory === "object",
+        `keys=${Object.keys(body).join(",")}`);
+      check("#41 memory reports unverified when a binary is set but unusable",
+        body.memory && body.memory.status === "unverified" && body.memory.available === false,
+        `memory=${JSON.stringify(body.memory)}`);
+      check("#41 memory distinguishes 'configured' from 'usable'",
+        body.memory && body.memory.binaryConfigured === true,
+        `the test server sets KANNAKA_BIN to an unusable path; memory=${JSON.stringify(body.memory)}`);
+      check("#41 classifier is retained for backwards compatibility",
+        body.classifier === "fallback", `got classifier=${JSON.stringify(body.classifier)}`);
 
       const svg = await request(port, "/api/constellation.svg");
       check("#46 SVG status line reports attention",

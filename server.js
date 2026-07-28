@@ -1481,7 +1481,9 @@ function updateStats(glyph) {
   document.getElementById('foldCount').textContent = glyph.foldSequence?.length || 0;
   document.getElementById('classesUsed').textContent = glyph.classesUsed || 0;
   document.getElementById('compressionRatio').textContent = glyph.compressionRatio ? glyph.compressionRatio.toFixed(1) + ':1' : '—';
-  document.getElementById('dominantClass').textContent = glyph.dominantClass || '—';
+  // ?? not || — class 0 is a real SGA class, and || rendered it as an em dash
+  // (i.e. "no data") for every glyph that legitimately folded to class 0. (#43)
+  document.getElementById('dominantClass').textContent = glyph.dominantClass ?? '—';
 }
 
 function updateMetadata(glyph) {
@@ -2406,6 +2408,18 @@ setInterval(refresh, 10000);
 
     Promise.all([radioCheck, nativeClassifierAvailable()]).then(([radioState, nativeOk]) => {
       checks.classifier = nativeOk ? "native" : "fallback";
+      // Memory had no object of its own: callers (and this repo's own
+      // dashboard) had to infer it by overloading the top-level `classifier`
+      // string. radio and attention are reported as objects, so memory being a
+      // bare inferred field made the surface inconsistent as well as thin.
+      // `classifier` is kept as-is for backwards compatibility. (#41)
+      checks.memory = {
+        available: nativeOk,
+        binaryConfigured: !!KANNAKA_BIN,
+        // Distinguishes "no binary configured" from "binary present but it
+        // cannot classify" — the two look identical through `classifier`.
+        status: nativeOk ? "native" : (KANNAKA_BIN ? "unverified" : "off"),
+      };
       // Prefer `current.title` (canonical now-playing) over a
       // playlist[currentTrackIdx] lookup which is null when /api/state
       // omits the playlist array. (#12)
