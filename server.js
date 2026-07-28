@@ -1440,15 +1440,24 @@ async function processInput(data, type) {
       throw new Error(glyph.error);
     }
     
-    currentGlyph = glyph;
-    startAnimation();
-    
+    displayGlyph(glyph);
+
   } catch (error) {
     console.error('Error processing input:', error);
     document.getElementById('canvasInfo').textContent = 'Error: ' + error.message;
   } finally {
     showLoading(false);
   }
+}
+
+// Render an ALREADY-CLASSIFIED glyph. Split out of processInput so a caller
+// that already holds a glyph can display it without a second /api/process
+// round-trip — which would also publish it to the attention beam a second
+// time. renderGlyph drives updateCanvasInfo/updateStats/updateMetadata, so
+// this is the full UI update. (#38)
+function displayGlyph(glyph) {
+  currentGlyph = glyph;
+  startAnimation();
 }
 
 function showLoading(show) {
@@ -1797,7 +1806,18 @@ function initializePresets() {
       if (radio.error) throw new Error(radio.error);
       radioBtn.querySelector('.preset-desc').textContent =
         radio.track + ' (' + radio.featureCount + ' features)';
-      processInput(radio.features, 'bytes');
+      // /api/radio already classified these features AND published the glyph
+      // to the attention beam tagged "audio". Re-POSTing them to /api/process
+      // rendered the same listening event a second time and published it
+      // AGAIN, mislabelled as generic "bytes" — two gravity pulls per radio
+      // click. Display the glyph we were already handed. (#38)
+      if (radio.glyph) {
+        displayGlyph(radio.glyph);
+      } else {
+        // buildGlyphFromBytes failed server-side, so nothing was published;
+        // classifying here is the only publish and stays correct.
+        processInput(radio.features, 'bytes');
+      }
     } catch (e) {
       radioBtn.querySelector('.preset-desc').textContent = e.message;
     }

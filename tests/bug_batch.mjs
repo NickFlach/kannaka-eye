@@ -17,6 +17,10 @@
  *   #22  attention-bridge parses nats://user:pass@host into user/pass, and a
  *        bare nats://token@host into a token (pre-fix: user:pass sent as one
  *        auth_token).
+ *   #38  the Radio preset renders the glyph /api/radio already returned
+ *        instead of re-POSTing to /api/process (pre-fix: one radio click
+ *        published the same listening event to attention twice, the second
+ *        time mislabelled "bytes" instead of "audio").
  *   #41  /api/constellation exposes a `memory` object instead of forcing
  *        callers to infer memory status from the `classifier` string.
  *   #43  the viewer renders dominantClass 0 as "0", not an em dash (pre-fix:
@@ -239,6 +243,19 @@ async function main() {
       check("#26 page routes large-file progress to #canvasInfo",
         html.includes("getElementById('canvasInfo').textContent"),
         "no canvasInfo progress write found");
+
+      // #38: one radio click must produce ONE attention publish. /api/radio
+      // already classifies and publishes as "audio"; re-POSTing to
+      // /api/process published the same listening event again as "bytes".
+      check("#38 radio preset renders the glyph it was already given",
+        html.includes("displayGlyph(radio.glyph)"),
+        "radio preset should reuse the returned glyph, not re-classify");
+      check("#38 radio preset does not unconditionally re-POST to /api/process",
+        !/radio\.track \+ ' \(' \+ radio\.featureCount \+ ' features\)';\s*processInput\(/.test(html),
+        "an unconditional processInput() after /api/radio double-publishes");
+      check("#38 a null glyph still falls back to classifying locally",
+        html.includes("processInput(radio.features, 'bytes')"),
+        "the fallback must survive for when buildGlyphFromBytes returns null");
 
       // #43: class 0 is a real SGA class. `|| '—'` rendered it as "no data".
       // Asserted against served page source, same approach as #26 — there is
