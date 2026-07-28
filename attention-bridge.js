@@ -55,18 +55,44 @@ function parseNatsUrl(u) {
   };
 }
 
+/**
+ * NATS `-ERR` lines that leave the connection usable.
+ *
+ * Per the NATS protocol most `-ERR`s are fatal and the server closes the
+ * socket, but a permissions violation (or an invalid subject) is scoped to the
+ * offending operation — the connection stays up and is still good for other
+ * subjects. Tearing down on those would produce a pointless reconnect loop.
+ */
+const NON_FATAL_ERR = /permissions violation|invalid subject/i;
+
+/** @returns {boolean} true when this `-ERR` should cost us the connection. */
+function isFatalNatsError(line) {
+  return !NON_FATAL_ERR.test(line);
+}
+
 class AttentionBridge {
-  constructor() {
+  /**
+   * @param {object} [opts]
+   * @param {string} [opts.url] Broker URL override. Defaults to NATS_URL.
+   *   Module-level env is read once at load, and this file is CommonJS — so a
+   *   test cannot re-read it by re-importing with a cache-busting query (the
+   *   CJS require cache keys on the resolved path and ignores the query).
+   *   An explicit override is the honest way to point an instance somewhere
+   *   else; production passes nothing and behaves exactly as before.
+   */
+  constructor(opts = {}) {
+    this._url = opts.url || NATS_URL;
     this._client = null;
     this._connected = false;
     this._buffer = "";
     this._reconnectTimer = null;
     this._published = 0;
     this._dropped = 0;
+    this._lastError = null;
   }
 
   connect() {
-    const parsed = parseNatsUrl(NATS_URL);
+    const parsed = parseNatsUrl(this._url);
     const { host, port } = parsed;
     // Auth precedence (#22): explicit env vars win, then credentials embedded
     // in NATS_URL. user/pass (if present) takes precedence over a token so a
@@ -87,6 +113,10 @@ class AttentionBridge {
       const lines = this._buffer.split("\r\n");
       this._buffer = lines.pop();
       for (const line of lines) {
+        // A fatal -ERR destroyed the socket earlier in this same chunk; the
+        // remaining lines belong to a connection that no longer exists, and
+        // writing a PONG to a destroyed socket just raises another error.
+        if (this._client !== sock) break;
         if (line.startsWith("INFO ")) {
           // Send CONNECT — minimal, no subscriptions needed (publish-only).
           const connect = { verbose: false, pedantic: false, lang: "node-raw", name: SOURCE_NAME, protocol: 1 };
@@ -105,6 +135,24 @@ class AttentionBridge {
         } else if (line === "PING") {
           sock.write("PONG\r\n");
         } else if (line.startsWith("-ERR")) {
+          this._lastError = line;
+          if (isFatalNatsError(line)) {
+            // Pre-fix this only logged. `_scheduleReconnect()` is reachable
+            // ONLY from the socket 'close' handler, so an -ERR the broker did
+            // not follow with a close — an auth rejection that leaves the TCP
+            // connection open — stranded the bridge forever: `_connected`
+            // never went true, every later glyph was dropped, and
+            // /api/attention/stats reported disconnected with nothing
+            // retrying. Destroy explicitly so 'close' fires and the existing
+            // 5s backoff takes over. (#47)
+            console.warn(`[attention-bridge] fatal NATS error, dropping connection to retry: ${line}`);
+            this._connected = false;
+            this._client = null;
+            try { sock.destroy(); } catch (_) { /* already gone */ }
+            break;
+          }
+          // Non-fatal: scoped to the offending operation, connection stays
+          // usable. Reconnecting here would loop without fixing anything.
           console.warn(`[attention-bridge] NATS error: ${line}`);
         }
       }
@@ -181,8 +229,17 @@ class AttentionBridge {
   }
 
   stats() {
-    return { connected: this._connected, hemisphere: HEMISPHERE, published: this._published, dropped: this._dropped };
+    return {
+      connected: this._connected,
+      hemisphere: HEMISPHERE,
+      published: this._published,
+      dropped: this._dropped,
+      // Last -ERR seen from the broker, so a bridge that is down for an
+      // auth/permissions reason says WHY rather than just "connected: false".
+      lastError: this._lastError,
+      reconnectPending: this._reconnectTimer != null,
+    };
   }
 }
 
-module.exports = { AttentionBridge, HEMISPHERE, SUBJECT, parseNatsUrl };
+module.exports = { AttentionBridge, HEMISPHERE, SUBJECT, parseNatsUrl, isFatalNatsError };
