@@ -17,6 +17,8 @@
  *   #22  attention-bridge parses nats://user:pass@host into user/pass, and a
  *        bare nats://token@host into a token (pre-fix: user:pass sent as one
  *        auth_token).
+ *   #48  startup does not announce "Native classifier: <path>" for a path it
+ *        never checked; an explicit-but-missing KANNAKA_BIN warns instead.
  *   #35  the attention bridge honours the constellation-wide
  *        KANNAKA_NATS_URL (pre-fix: only the generic NATS_URL was read, so a
  *        correctly-configured box silently published to localhost:4222).
@@ -251,6 +253,24 @@ async function main() {
       const body = JSON.parse(res.body);
       check("#21 /api/constellation classifier is 'fallback' when native unusable",
         body.classifier === "fallback", `got ${JSON.stringify(body.classifier)}`);
+    }
+
+    // ── #48: the startup line must not claim a classifier it never checked ──
+    //
+    // This server was spawned with KANNAKA_BIN pointed at FAKE_BIN, which does
+    // not exist — exactly the condition in the report. Pre-fix it printed
+    // "[eye] Native classifier: <path>" unconditionally, so a typo'd env var
+    // read as a working native setup in the logs.
+    {
+      check("#48 startup does not announce a native classifier that is absent",
+        !/\[eye\] Native classifier: /.test(serverLog),
+        `serverLog claimed a native classifier:\n${serverLog.slice(0, 300)}`);
+      check("#48 startup warns that KANNAKA_BIN points at nothing",
+        /KANNAKA_BIN is set to .* but no file exists there/.test(serverLog),
+        `expected an explicit warning; got:\n${serverLog.slice(0, 300)}`);
+      check("#48 the warning says why auto-detection did not rescue it",
+        /Auto-detection is skipped/.test(serverLog),
+        `the operator needs to know the explicit setting suppressed auto-detect`);
     }
 
     // ── #24: SVG does not light Memory without a verified probe ──
