@@ -17,6 +17,10 @@
  *   #22  attention-bridge parses nats://user:pass@host into user/pass, and a
  *        bare nats://token@host into a token (pre-fix: user:pass sent as one
  *        auth_token).
+ *   #47  a fatal NATS -ERR drops the socket so the 5s reconnect fires
+ *        (pre-fix: -ERR only logged, and _scheduleReconnect() is reachable
+ *        only from 'close' — a broker that rejected auth without closing left
+ *        the bridge permanently dead).
  *
  * Usage: node tests/bug_batch.mjs   (exit 0 iff all pass)
  */
@@ -27,7 +31,7 @@ import { fileURLToPath } from "url";
 import net from "net";
 import http from "http";
 
-import { parseNatsUrl } from "../attention-bridge.js";
+import { AttentionBridge, parseNatsUrl, isFatalNatsError } from "../attention-bridge.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const EYE_DIR = join(__dirname, "..");
@@ -126,6 +130,61 @@ async function main() {
 
     const plain = parseNatsUrl("nats://localhost:4222");
     check("#22 plain URL → no creds", plain.user === null && plain.token === null, `got user=${plain.user} token=${plain.token}`);
+  }
+
+  // ── #47: a fatal -ERR must drop the socket so a reconnect is scheduled ──
+  //
+  // Pre-fix, `-ERR` only logged. `_scheduleReconnect()` is reachable ONLY from
+  // the socket 'close' handler, so a broker that rejected auth WITHOUT closing
+  // the TCP connection stranded the bridge permanently: `_connected` never
+  // went true, every later glyph was dropped, and nothing ever retried.
+  {
+    check("#47 authorization violation is classified fatal",
+      isFatalNatsError("-ERR 'Authorization Violation'") === true);
+    check("#47 permissions violation is classified NON-fatal",
+      isFatalNatsError("-ERR 'Permissions Violation for Publish to KANNAKA.attention.eye'") === false,
+      "tearing down on a per-subject permissions error would just reconnect-loop");
+
+    // Fake broker that sends INFO then -ERR and then deliberately HOLDS the
+    // socket open — the exact condition the bug needs.
+    const held = [];
+    const broker = net.createServer((sock) => {
+      held.push(sock);
+      sock.write("INFO {\"server_id\":\"fake\"}\r\n");
+      sock.on("data", () => {});
+      setTimeout(() => { try { sock.write("-ERR 'Authorization Violation'\r\n"); } catch { /* gone */ } }, 30);
+      sock.on("error", () => {});
+    });
+    const bport = await new Promise((res) => broker.listen(0, "127.0.0.1", () => res(broker.address().port)));
+
+    // Point this instance at the fake broker explicitly. attention-bridge.js
+    // is CommonJS and reads NATS_URL once at module load, so setting the env
+    // here and re-importing with a cache-busting query does NOT work: the CJS
+    // require cache keys on the resolved path and ignores the query, handing
+    // back the already-evaluated module still aimed at localhost:4222.
+    const bridge = new AttentionBridge({ url: `nats://127.0.0.1:${bport}` });
+    bridge.connect();
+
+    await new Promise((r) => setTimeout(r, 400));
+
+    const st = bridge.stats();
+    check("#47 bridge is not left believing it is connected",
+      st.connected === false, `stats=${JSON.stringify(st)}`);
+    check("#47 a reconnect is actually scheduled after a fatal -ERR",
+      st.reconnectPending === true,
+      `nothing is retrying, so the link is permanently dead; stats=${JSON.stringify(st)}`);
+    check("#47 the reason is reported, not just 'disconnected'",
+      typeof st.lastError === "string" && st.lastError.includes("Authorization Violation"),
+      `got lastError=${JSON.stringify(st.lastError)}`);
+    check("#47 glyphs published while down are counted as dropped",
+      bridge.publishGlyph({ foldSequence: [1], amplitudes: [1] }, "text") === false &&
+      bridge.stats().dropped >= 1,
+      `stats=${JSON.stringify(bridge.stats())}`);
+
+    // Stop the 5s retry so the test process can exit promptly.
+    if (bridge._reconnectTimer) clearTimeout(bridge._reconnectTimer);
+    for (const s of held) { try { s.destroy(); } catch { /* ignore */ } }
+    broker.close();
   }
 
   const stub = await startStubRadio();
