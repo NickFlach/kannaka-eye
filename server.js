@@ -230,17 +230,25 @@ function classifyNative(inputBuffer) {
 /**
  * Probe whether the native classifier is actually usable (#21).
  *
- * KANNAKA_BIN existing on disk does NOT mean Eye can classify natively: the
- * current kannaka CLI has no `classify` subcommand, so classifyNative() fails
- * on every request and silently falls back to the JS classifier. Reporting
- * "native" from mere file presence made /api/constellation and the SVG lie
- * about whether memory-native classification is wired up.
+ * KANNAKA_BIN existing on disk does NOT mean Eye can classify natively.
+ * Reporting "native" from mere file presence made /api/constellation and the
+ * SVG lie about whether memory-native classification is wired up.
  *
  * Probe once with a tiny sample, memoize the result, and only let callers
- * claim "native" when the binary genuinely returns a classified glyph. If a
- * future kannaka ships a real classify subcommand this begins reporting native
- * truthfully with no further changes. Resolved once at first use, like
- * KANNAKA_BIN itself — a rebuild mid-run needs a restart to be picked up.
+ * claim "native" when the binary genuinely returns a classified glyph.
+ * Resolved once at first use, like KANNAKA_BIN itself — a rebuild mid-run
+ * needs a restart to be picked up.
+ *
+ * Status note (#40): when this was written the kannaka CLI had no `classify`
+ * subcommand at all, so the probe always failed. It does now — `classify` is
+ * behind the `glyph` feature, which is in kannaka's DEFAULT feature set, and a
+ * stock build answers stdin with JSON carrying `fold_sequence`. So the native
+ * path is live on a current binary and this probe reports it truthfully, which
+ * is exactly what it was built to do.
+ *
+ * The probe still matters, and is still the right shape: `glyph` can be
+ * switched off in a custom build, an older binary may predate the subcommand,
+ * and the CLI contract could change again. Presence on disk is not capability.
  */
 let _nativeProbe = null; // memoized Promise<boolean>
 function nativeClassifierAvailable() {
