@@ -2100,6 +2100,37 @@ const server = http.createServer((req, res) => {
             return;
           }
           const perception = JSON.parse(data);
+
+          // Radio's IDLE payload is not perception. When nothing is playing,
+          // perception.js emits every field present but zeroed —
+          // mel_spectrogram: Array(128).fill(0), mfcc zeros, tempo 0,
+          // rms_energy 0, valence 0.5 — with an explicit
+          // `status: "no_perception"`.
+          //
+          // The #16 guard below only catches a payload with NO perception
+          // fields, so this one sailed past it: the zeros are real numbers,
+          // features.length > 0, and the eye rendered a confident glyph for
+          // "nothing is playing". A glyph that means silence is worse than no
+          // glyph, because it looks like a reading.
+          //
+          // Radio treats this marker the same way — server/index.js refuses to
+          // broadcast perception over WS when `status === 'no_perception'` —
+          // so this is honouring an existing contract, not inventing one. (#56)
+          if (perception && perception.status === "no_perception") {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            // 200, not 5xx: radio is healthy and answering, it simply has
+            // nothing to perceive. `idle`/`status` are the machine-readable
+            // signal; `error` is kept because it is the field the preset UI
+            // renders — without it the client falls through to classifying
+            // `radio.features`, which would be undefined here.
+            res.end(JSON.stringify({
+              idle: true,
+              status: "no_perception",
+              error: "Radio is idle — nothing playing, so there is no perception to render",
+            }));
+            return;
+          }
+
           // Convert perception features to bytes for classification
           const features = [];
           if (perception.mel_spectrogram) {

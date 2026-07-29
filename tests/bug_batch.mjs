@@ -120,17 +120,35 @@ async function waitReady(port, timeoutMs = 20000) {
 // tempo_bpm of 0 (the #27 edge case) and no other perception fields beyond
 // valence/energy.
 function startStubRadio() {
+  // `state.idle` flips the stub to Radio's real IDLE payload — a byte-for-byte
+  // copy of the initial value in kannaka-radio's server/perception.js. Every
+  // field is PRESENT and zeroed, which is precisely why the #16 "no perception
+  // fields" guard does not catch it. (#56)
+  const state = { idle: false };
+  const IDLE = {
+    mel_spectrogram: Array(128).fill(0),
+    mfcc: Array(13).fill(0),
+    tempo_bpm: 0,
+    spectral_centroid: 0,
+    rms_energy: 0,
+    pitch: 0,
+    valence: 0.5,
+    status: "no_perception",
+    track_info: null,
+  };
   return new Promise((resolve) => {
     const srv = http.createServer((req, res) => {
       if (req.url === "/api/perception") {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ tempo_bpm: 0, valence: 0.5, rms_energy: 0.25 }));
+        res.end(JSON.stringify(
+          state.idle ? IDLE : { tempo_bpm: 0, valence: 0.5, rms_energy: 0.25 },
+        ));
       } else {
         res.writeHead(404);
         res.end("{}");
       }
     });
-    srv.listen(0, "127.0.0.1", () => resolve({ srv, port: srv.address().port }));
+    srv.listen(0, "127.0.0.1", () => resolve({ srv, port: srv.address().port, state }));
   });
 }
 
@@ -320,6 +338,42 @@ async function main() {
         } else {
           check("#37 /api/radio reachable for levelDistribution check", false,
             `status=${r.status} body=${r.body.slice(0, 120)}`);
+        }
+      }
+
+      // #56: Radio's IDLE payload must not become a glyph. When nothing is
+      // playing, perception.js emits every field present but ZEROED with an
+      // explicit status: "no_perception" — so the #16 "no perception fields"
+      // guard sails past it and the eye rendered a confident glyph for
+      // silence. Radio itself refuses to broadcast this payload over WS
+      // (server/index.js), so the marker is an existing contract.
+      {
+        stub.state.idle = true;
+        try {
+          const r = await request(port, "/api/radio");
+          const rb = (() => { try { return JSON.parse(r.body); } catch { return {}; } })();
+          check("#56 idle radio does not return a glyph",
+            !rb.glyph,
+            `glyph=${JSON.stringify(rb.glyph && Object.keys(rb.glyph))}`);
+          check("#56 idle radio is reported as idle, not as perception",
+            rb.idle === true && rb.status === "no_perception",
+            `idle=${rb.idle} status=${JSON.stringify(rb.status)}`);
+          // Radio is healthy — it simply has nothing to perceive — so this is
+          // not an upstream failure and must not be a 5xx.
+          check("#56 idle is not reported as an upstream failure",
+            r.status === 200,
+            `status=${r.status}`);
+          // The preset UI renders `error` and otherwise falls through to
+          // classifying `radio.features`; without a message it would try to
+          // classify undefined.
+          check("#56 idle carries a human-readable message for the preset UI",
+            typeof rb.error === "string" && rb.error.length > 0,
+            `error=${JSON.stringify(rb.error)}`);
+          check("#56 idle response carries no feature bytes",
+            !Array.isArray(rb.features) || rb.features.length === 0,
+            `featureCount=${Array.isArray(rb.features) ? rb.features.length : "absent"}`);
+        } finally {
+          stub.state.idle = false;
         }
       }
 
